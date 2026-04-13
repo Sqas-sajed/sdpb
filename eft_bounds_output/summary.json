@@ -1,0 +1,110 @@
+[
+  {
+    "file": "pmp_g10_over_g00_positivity_only.json",
+    "numerator": "W_{1,0}",
+    "denominator": "W_{0,0}",
+    "null_constraints": false,
+    "crossing": "su",
+    "n_variables": 10,
+    "n_blocks": 4
+  },
+  {
+    "file": "pmp_g10_over_g00_with_su_crossing.json",
+    "numerator": "W_{1,0}",
+    "denominator": "W_{0,0}",
+    "null_constraints": true,
+    "crossing": "su",
+    "n_variables": 6,
+    "n_blocks": 4
+  },
+  {
+    "file": "pmp_g10_over_g00_with_full_crossing.json",
+    "numerator": "W_{1,0}",
+    "denominator": "W_{0,0}",
+    "null_constraints": true,
+    "crossing": "full",
+    "n_variables": 3,
+    "n_blocks": 4
+  },
+  {
+    "file": "pmp_g20_over_g00_positivity_only.json",
+    "numerator": "W_{2,0}",
+    "denominator": "W_{0,0}",
+    "null_constraints": false,
+    "crossing": "su",
+    "n_variables": 10,
+    "n_blocks": 4
+  },
+  {
+    "file": "pmp_g20_over_g00_with_su_crossing.json",
+    "numerator": "W_{2,0}",
+    "denominator": "W_{0,0}",
+    "null_constraints": true,
+    "crossing": "su",
+    "n_variables": 6,
+    "n_blocks": 4
+  },
+  {
+    "file": "pmp_g20_over_g00_with_full_crossing.json",
+    "numerator": "W_{2,0}",
+    "denominator": "W_{0,0}",
+    "null_constraints": true,
+    "crossing": "full",
+    "n_variables": 3,
+    "n_blocks": 4
+  },
+  {
+    "file": "pmp_g01_over_g00_positivity_only.json",
+    "numerator": "W_{0,1}",
+    "denominator": "W_{0,0}",
+    "null_constraints": false,
+    "crossing": "su",
+    "n_variables": 10,
+    "n_blocks": 4
+  },
+  {
+    "file": "pmp_g01_over_g00_with_su_crossing.json",
+    "numerator": "W_{0,1}",
+    "denominator": "W_{0,0}",
+    "null_constraints": true,
+    "crossing": "su",
+    "n_variables": 6,
+    "n_blocks": 4
+  },
+  {
+    "file": "pmp_g01_over_g00_with_full_crossing.json",
+    "numerator": "W_{0,1}",
+    "denominator": "W_{0,0}",
+    "null_constraints": true,
+    "crossing": "full",
+    "n_variables": 3,
+    "n_blocks": 4
+  },
+  {
+    "file": "pmp_g20_over_g10_positivity_only.json",
+    "numerator": "W_{2,0}",
+    "denominator": "W_{1,0}",
+    "null_constraints": false,
+    "crossing": "su",
+    "n_variables": 10,
+    "n_blocks": 4
+  },
+  {
+    "file": "pmp_g20_over_g10_with_su_crossing.json",
+    "numerator": "W_{2,0}",
+    "denominator": "W_{1,0}",
+    "null_constraints": true,
+    "crossing": "su",
+    "n_variables": 6,
+    "n_blocks": 4
+  },
+  {
+    "file": "pmp_g20_over_g10_with_full_crossing.json",
+    "numerator": "W_{2,0}",
+    "denominator": "W_{1,0}",
+    "null_constraints": true,
+    "crossing": "full",
+    "n_variables": 3,
+    "n_blocks": 4
+  }
+]
