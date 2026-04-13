@@ -498,6 +498,89 @@ def print_comparison_analysis():
     """)
 
 
+def _run_visualizations(viz_dir: str, max_order: int = 3) -> None:
+    """
+    Generate all visualization images for the current run.
+
+    Called when --visualize is passed on the command line.
+    Produces JPEG and BMP files (800×800 pixels) in viz_dir.
+    """
+    try:
+        from eft_bounds.visualize import (
+            plot_gegenbauer_polynomials,
+            plot_spectral_functions,
+            render_null_constraint_formulas,
+            plot_null_constraints_heatmap,
+            plot_variable_elimination,
+            plot_bound_comparison,
+            plot_allowed_region_2d,
+            plot_summary_dashboard,
+        )
+    except ImportError as exc:
+        print(f"  Visualization skipped (missing dependencies): {exc}")
+        print("  Run: pip install matplotlib numpy pillow")
+        return
+
+    os.makedirs(viz_dir, exist_ok=True)
+    p = lambda name: os.path.join(viz_dir, name)  # noqa: E731
+
+    print()
+    print("=" * 70)
+    print("GENERATING VISUALIZATION IMAGES")
+    print(f"  Output directory: {viz_dir}")
+    print("=" * 70)
+
+    print("  Gegenbauer polynomials …")
+    plot_gegenbauer_polynomials(p("gegenbauer_polynomials.jpg"))
+
+    print("  Spectral functions …")
+    plot_spectral_functions(p("spectral_functions.jpg"))
+
+    print("  Null constraint formulas (s↔u crossing) …")
+    render_null_constraint_formulas(
+        p("null_constraint_formulas_su.jpg"), max_order=max_order, crossing_type="su"
+    )
+
+    print("  Null constraint formulas (full S3 crossing) …")
+    render_null_constraint_formulas(
+        p("null_constraint_formulas_full.jpg"), max_order=max_order, crossing_type="full"
+    )
+
+    print("  Null constraint heatmap (s↔u crossing) …")
+    plot_null_constraints_heatmap(
+        p("null_constraints_heatmap_su.jpg"), max_order=max_order, crossing_type="su"
+    )
+
+    print("  Null constraint heatmap (full S3 crossing) …")
+    plot_null_constraints_heatmap(
+        p("null_constraints_heatmap_full.jpg"), max_order=max_order, crossing_type="full"
+    )
+
+    print("  Variable elimination (s↔u crossing) …")
+    plot_variable_elimination(
+        p("variable_elimination_su.jpg"), max_order=max_order, crossing_type="su"
+    )
+
+    print("  Variable elimination (full S3 crossing) …")
+    plot_variable_elimination(
+        p("variable_elimination_full.jpg"), max_order=max_order, crossing_type="full"
+    )
+
+    print("  Bound comparison chart …")
+    plot_bound_comparison(p("bound_comparison.jpg"), max_order=min(max_order, 3))
+
+    print("  2D allowed region …")
+    plot_allowed_region_2d(
+        p("allowed_region_W10_vs_W20.jpg"), max_order=min(max_order, 3)
+    )
+
+    print("  Summary dashboard …")
+    plot_summary_dashboard(p("summary_dashboard.jpg"), max_order=min(max_order, 3))
+
+    print()
+    print(f"  Done: {len(os.listdir(viz_dir))} files in {viz_dir}")
+
+
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -529,6 +612,17 @@ def main():
         help="Only print comparison analysis",
     )
 
+    parser.add_argument(
+        "--visualize", action="store_true",
+        help="Generate visualization images (JPEG + BMP) alongside PMP files",
+    )
+    parser.add_argument(
+        "--viz-dir",
+        default=None,
+        help="Output directory for visualization images "
+             "(default: <output-dir>/visualizations/)",
+    )
+
     args = parser.parse_args()
 
     # Always run consistency checks first
@@ -557,6 +651,11 @@ def main():
 
     # Print comparison analysis
     print_comparison_analysis()
+
+    # Optional visualization
+    if args.visualize:
+        viz_dir = args.viz_dir or os.path.join(args.output_dir, "visualizations")
+        _run_visualizations(viz_dir, max_order=args.max_order)
 
     # Print instructions for running SDPB
     print("=" * 70)
