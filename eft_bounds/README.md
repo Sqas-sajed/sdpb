@@ -32,6 +32,38 @@ with three configurations each:
 - **with_su_crossing**: s↔u null constraints from Sinha-Zahed
 - **with_full_crossing**: Full S₃ crossing (s↔u + s↔t) constraints
 
+### 1b. Generate the exact crossing-basis automation pipeline
+
+To derive the full-crossing null constraints from the exact
+crossing-symmetric basis
+
+\[
+M(s,t) = \sum_{p,q} W_{p,q}\,x^p y^q,\qquad
+x=-(st+tu+us),\quad y=-stu,
+\]
+
+expand them into ordinary `(s,t)` polynomials, export JSON artifacts, and
+generate paired-inequality PMP files plus lower/upper bound PMP examples, run:
+
+```bash
+python -m eft_bounds.crossing_pipeline \
+    --output-dir /tmp/eft_crossing_pipeline \
+    --max-degree 6 \
+    --mass-squared 1 \
+    --precision 80 \
+    --max-spin 10
+```
+
+This writes:
+
+- `crossing_to_ordinary.json` — exact basis expansion of each `x^p y^q`
+- `null_constraints.json` — the full list of exact null constraints on ordinary coefficients
+- `null_constraints_pmp.json` — the same constraints encoded as paired SDPB PMP blocks
+- `eq3_to_eq23_translation.json` — exact map from the Sinha-Zahed eq.(3) basis to the
+  Caron-Huot/Duong eq.(2.3) basis
+- `lower_*.json`, `upper_*.json` — example two-sided SDPB PMP files
+- `reliability_checks.json` — verification results on at least five examples
+
 ### 2. Convert and solve with SDPB
 
 ```bash
@@ -115,6 +147,20 @@ constraints:
 These appear as 1×1 constant polynomial matrix blocks in the PMP.
 This is less efficient but useful for cross-checking.
 
+### Exact full-crossing derivation
+
+The new `eft_bounds.crossing_pipeline` module derives the null constraints
+without guessing relations directly in the ordinary `(s,t)` basis:
+
+1. enumerate the symmetric basis monomials `x^p y^q` up to the chosen EFT cutoff,
+2. expand each monomial exactly into ordinary `s^a t^b` coefficients using
+   `u = 4m² - s - t`,
+3. compute the exact left-nullspace of that basis-expansion matrix,
+4. export the resulting null constraints and optional PMP encodings.
+
+This is the recommended route when you want the exact full-crossing relations
+associated with the Sinha-Zahed eq.(3) basis.
+
 ## Comparison with Extremal EFT Results
 
 ### Expected Behavior
@@ -180,6 +226,13 @@ eft_bounds/
 - `get_null_constraints(max_order, m_sq)` — s↔u crossing null constraints
 - `get_crossing_symmetric_null_constraints(max_order, m_sq)` — Full S₃ crossing
 - `eliminate_variables(constraints, indices)` — Variable elimination (Method A)
+
+### `crossing_pipeline.py`
+- `derive_null_constraints(max_degree, m_sq)` — exact full-crossing null constraints from the `x,y` basis
+- `build_crossing_to_ordinary_map(...)` — exact expansion of `x^p y^q` into ordinary polynomials
+- `build_translation_metadata(...)` — exact map from Sinha-Zahed eq.(3) coefficients to Extremal-EFT eq.(2.3) coefficients
+- `generate_two_sided_bound_pmps(...)` — lower/upper SDPB PMP files for one symmetric-basis ratio
+- `run_reliability_checks(...)` — exact checks on at least five amplitudes
 
 ### `pmp_generator.py`
 - `generate_pmp_json(objective_index, ...)` — Generate PMP for single coefficient

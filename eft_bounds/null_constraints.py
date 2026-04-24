@@ -336,24 +336,18 @@ def get_crossing_symmetric_null_constraints(
     m_sq: Fraction = Fraction(1),
 ) -> List[Dict[Tuple[int, int], Fraction]]:
     """
-    Compute null constraints from full stu-crossing symmetry.
+    Compute a simple full-crossing approximation on ordinary s,t coefficients.
 
-    For identical scalars, the amplitude must satisfy:
-      M(s,t,u) = M(t,s,u) = M(s,u,t) = ... (full S₃ permutation symmetry)
+    This helper combines:
+      1. the direct s↔u relations derived in `get_null_constraints`, and
+      2. the additional s↔t symmetry conditions a_{a,b} = a_{b,a}.
 
-    This is stronger than just s↔u symmetry and gives additional constraints.
+    It is useful as a lightweight approximation in the ordinary polynomial
+    basis, but it is not the exact crossing-basis derivation from the
+    Sinha-Zahed eq.(3) variables. For the exact derivation from the
+    crossing-symmetric basis x = -(st+tu+us), y = -stu, use:
 
-    The crossing-symmetric variables are:
-      x₂ = s² + t² + u² = (s+t+u)² - 2(st+tu+us) = (4m²)² + 2σ₂
-      x₃ = s³ + t³ + u³ = 3stu + (s+t+u)(s²+t²+u²-st-tu-us)
-
-    where σ₂ = st+tu+us, σ₃ = stu, and s+t+u = 4m².
-
-    For a crossing-symmetric expansion M = Σ W_{pq} σ₂^p σ₃^q,
-    the null constraints relate coefficients at different orders.
-
-    These are the constraints from Sinha & Zahed (2021), derived from
-    the crossing-symmetric dispersion relation.
+        eft_bounds.crossing_pipeline.derive_null_constraints(...)
 
     Parameters
     ----------

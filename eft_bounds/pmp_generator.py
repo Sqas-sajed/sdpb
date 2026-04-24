@@ -22,6 +22,7 @@ The physics mapping:
 
 import json
 import math
+from collections import defaultdict
 from fractions import Fraction
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -191,6 +192,103 @@ def generate_pmp_json(
     }
 
     return pmp
+
+
+def _enumerate_indices(max_order: int) -> List[Tuple[int, int]]:
+    indices = []
+    for total in range(max_order + 1):
+        for p in range(total + 1):
+            indices.append((p, total - p))
+    return indices
+
+
+def _get_constraints(
+    max_order: int,
+    m_sq: Fraction,
+    crossing_type: str,
+) -> List[Dict[Tuple[int, int], Fraction]]:
+    if crossing_type == "full":
+        return get_crossing_symmetric_null_constraints(max_order, m_sq)
+    if crossing_type == "crossing_basis":
+        from .crossing_pipeline import (
+            derive_null_constraints as derive_crossing_basis_null_constraints,
+        )
+        return derive_crossing_basis_null_constraints(max_order, m_sq)
+    return get_null_constraints(max_order, m_sq)
+
+
+def _reduce_linear_functional(
+    terms: Dict[Tuple[int, int], Fraction],
+    z_indices: List[Tuple[int, int]],
+    substitution: Dict[Tuple[int, int], Dict[Tuple[int, int], Fraction]],
+) -> List[Fraction]:
+    reduced: Dict[Tuple[int, int], Fraction] = defaultdict(Fraction)
+    for index, coeff in terms.items():
+        if index in substitution:
+            for free_index, sub_coeff in substitution[index].items():
+                reduced[free_index] += coeff * sub_coeff
+        else:
+            reduced[index] += coeff
+    return [reduced.get(index, Fraction(0)) for index in z_indices]
+
+
+def generate_pmp_for_linear_functional_bound(
+    objective_terms: Dict[Tuple[int, int], Fraction],
+    normalization_terms: Dict[Tuple[int, int], Fraction],
+    max_spin: int = 10,
+    max_order: int = 6,
+    use_null_constraints: bool = True,
+    crossing_type: str = "su",
+    m_sq: Fraction = Fraction(1),
+    d: int = 4,
+    precision: int = 200,
+    bound_direction: str = "lower",
+) -> Dict[str, Any]:
+    """
+    Generate a PMP for a generic linear-functional lower or upper bound.
+
+    The optimization variable is the ordinary EFT coefficient vector in the
+    s,t polynomial basis. `objective_terms` and `normalization_terms` specify
+    exact linear functionals on that basis.
+    """
+    all_indices = _enumerate_indices(max_order)
+    if use_null_constraints:
+        constraints = _get_constraints(max_order=max_order, m_sq=m_sq, crossing_type=crossing_type)
+        free_indices, substitution = eliminate_variables(constraints, all_indices)
+    else:
+        free_indices = list(all_indices)
+        substitution = {}
+
+    z_indices = list(free_indices)
+    objective = _reduce_linear_functional(objective_terms, z_indices, substitution)
+    if bound_direction == "lower":
+        objective = [-coeff for coeff in objective]
+    elif bound_direction != "upper":
+        raise ValueError(f"Unknown bound direction '{bound_direction}'.")
+    normalization = _reduce_linear_functional(normalization_terms, z_indices, substitution)
+
+    if all(coeff == 0 for coeff in normalization):
+        raise ValueError("Normalization functional vanishes after applying constraints.")
+
+    pmp_array = []
+    for ell in range(0, max_spin + 1, 2):
+        block = _build_spin_block(
+            ell=ell,
+            z_indices=z_indices,
+            substitution=substitution,
+            m_sq=m_sq,
+            d=d,
+            max_order=max_order,
+            precision=precision,
+        )
+        if block is not None:
+            pmp_array.append(block)
+
+    return {
+        "objective": [fraction_to_str(value, precision) for value in objective],
+        "normalization": [fraction_to_str(value, precision) for value in normalization],
+        "PositiveMatrixWithPrefactorArray": pmp_array,
+    }
 
 
 def _build_spin_block(
@@ -435,6 +533,7 @@ def generate_pmp_for_ratio_bound(
     m_sq: Fraction = Fraction(1),
     d: int = 4,
     precision: int = 200,
+    bound_direction: str = "lower",
 ) -> Dict[str, Any]:
     """
     Generate PMP for bounding the ratio W_{num} / W_{den}.
@@ -454,72 +553,15 @@ def generate_pmp_for_ratio_bound(
     dict
         PMP JSON structure.
     """
-    # Set the normalization index to the denominator
-    mu_threshold = 4 * m_sq
-
-    # Build the problem with denominator normalized to 1
-    all_indices = []
-    for total in range(max_order + 1):
-        for p in range(total + 1):
-            q = total - p
-            all_indices.append((p, q))
-
-    # Apply null constraints
-    if use_null_constraints:
-        if crossing_type == "full":
-            constraints = get_crossing_symmetric_null_constraints(max_order, m_sq)
-        else:
-            constraints = get_null_constraints(max_order, m_sq)
-        free_indices, substitution = eliminate_variables(constraints, all_indices)
-    else:
-        free_indices = list(all_indices)
-        substitution = {}
-
-    # Normalization: denominator_index = 1
-    if denominator_index not in free_indices:
-        raise ValueError(
-            f"Denominator index {denominator_index} was eliminated by null constraints. "
-            f"Choose a different denominator."
-        )
-
-    # z-vector: position 0 is the normalization variable
-    z_indices = [denominator_index] + [
-        idx for idx in free_indices if idx != denominator_index
-    ]
-    N = len(z_indices) - 1
-
-    # Objective: minimize numerator = maximize -numerator
-    objective = [Fraction(0)] * (N + 1)
-    if numerator_index in substitution:
-        for free_idx, coeff in substitution[numerator_index].items():
-            if free_idx in z_indices:
-                k = z_indices.index(free_idx)
-                objective[k] = -coeff
-    elif numerator_index in z_indices:
-        k = z_indices.index(numerator_index)
-        objective[k] = Fraction(-1)
-
-    # Normalization
-    normalization = [Fraction(0)] * (N + 1)
-    normalization[0] = Fraction(1)
-
-    # Build blocks for each spin
-    pmp_array = []
-    for ell in range(0, max_spin + 1, 2):
-        block = _build_spin_block(
-            ell=ell,
-            z_indices=z_indices,
-            substitution=substitution,
-            m_sq=m_sq,
-            d=d,
-            max_order=max_order,
-            precision=precision,
-        )
-        if block is not None:
-            pmp_array.append(block)
-
-    return {
-        "objective": [fraction_to_str(a, precision) for a in objective],
-        "normalization": [fraction_to_str(n, precision) for n in normalization],
-        "PositiveMatrixWithPrefactorArray": pmp_array,
-    }
+    return generate_pmp_for_linear_functional_bound(
+        objective_terms={numerator_index: Fraction(1)},
+        normalization_terms={denominator_index: Fraction(1)},
+        max_spin=max_spin,
+        max_order=max_order,
+        use_null_constraints=use_null_constraints,
+        crossing_type=crossing_type,
+        m_sq=m_sq,
+        d=d,
+        precision=precision,
+        bound_direction=bound_direction,
+    )
