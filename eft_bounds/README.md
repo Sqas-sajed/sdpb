@@ -64,6 +64,31 @@ This writes:
 - `lower_*.json`, `upper_*.json` — example two-sided SDPB PMP files
 - `reliability_checks.json` — verification results on at least five examples
 
+### 1c. Generate the paper-aligned spin/$s_1$ null-constraint pipeline
+
+To work directly with the Sinha-Zahed eq.~(11) null constraints in terms of
+spin and $s_1$ (rather than ordinary $(s,t)$ monomials), run:
+
+```bash
+python -m eft_bounds.dispersion_pipeline \
+    --output-dir /tmp/eft_dispersion_pipeline \
+    --max-order 8 \
+    --precision 80 \
+    --max-spin 10
+```
+
+This writes:
+
+- `eq11_null_constraints.json` — d=4 eq.(11) kernels as ordinary polynomials in spin $\ell$ with the required $s_1$ denominator power
+- `extremal_d4_functionals.json` — the d=4 representative functions used in the Extremal-EFT dual formulation
+- `eq3_to_eq23_translation.json` — translation from the Sinha-Zahed eq.(3) basis to the Extremal-EFT eq.(2.3) basis
+- `dispersion_reliability_checks.json` — explicit paper-formula checks on at least five examples
+- `lower_*.json`, `upper_*.json` — example lower/upper SDPB PMP files
+
+The detailed derivation note for this rebuilt pipeline is:
+
+- `/home/runner/work/sdpb/sdpb/eft_bounds/notes/positivity_bounds_pipeline.tex`
+
 ### 2. Convert and solve with SDPB
 
 ```bash
@@ -233,6 +258,13 @@ eft_bounds/
 - `build_translation_metadata(...)` — exact map from Sinha-Zahed eq.(3) coefficients to Extremal-EFT eq.(2.3) coefficients
 - `generate_two_sided_bound_pmps(...)` — lower/upper SDPB PMP files for one symmetric-basis ratio
 - `run_reliability_checks(...)` — exact checks on at least five amplitudes
+
+### `dispersion_pipeline.py`
+- `compute_D_coefficient(n, m, ell, alpha)` — exact Sinha-Zahed eq.(11) coefficient
+- `d4_D_spin_polynomial(n, m)` — d=4 ordinary polynomial in spin for $D^{(n,m)}_{\ell,1/2}$
+- `d4_eq11_kernel_polynomial(n, m)` — d=4 ordinary polynomial in spin for the full eq.(11) integrand kernel
+- `build_eq11_constraints_json(...)` — export spin/$s_1$ null constraints to JSON
+- `write_pipeline_outputs(...)` — generate the JSON/PMP output bundle for the paper-aligned pipeline
 
 ### `pmp_generator.py`
 - `generate_pmp_json(objective_index, ...)` — Generate PMP for single coefficient
