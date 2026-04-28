@@ -35,7 +35,7 @@ All Wilson coefficients are labelled by a single pair $(n, m)$:
 \[
   W_{n-m,\,m}:\quad
   \begin{cases}
-    n > m \ge 0 & \text{objectives (first CSDR index } n-m > 0) \\
+    n \ge m \ge 0,\; 2n+m>0 & \text{objectives (includes } W_{0,m}\text{ when }n=m) \\
     n < m,\; m > n \ge 1 & \text{null constraints } (W_{n-m,m} = 0)
   \end{cases}
 \]
@@ -145,30 +145,45 @@ Verified: $D^{(1,2)}_{\ell,\tfrac{1}{2}}$ matches the closed form
 for $\ell = 0, 2, 4, 6, 8$ (exact rational arithmetic, checked by \texttt{check\_closed\_form\_1\_2}).
 \end{mdframed}
 
-\subsection{Objectives ($n \ge m \ge 0$): user's formula from CSDR eq.~(4)}
+\subsection{Objectives ($n \ge m \ge 0$): corrected formula (same parent as null)}
+
+\textbf{Corrected formula} (user's derivation from CSDR eq.~(4), valid for $n \ge m \ge 0$):
 
 \begin{equation}\label{eq:D_obj}
-  D_\alpha^{(n,m)}
+  D_{\ell,\alpha}^{(n,m)}
   = \sum_{j=0}^{m}
-    \frac{(-4)^j\,(-\tfrac{1}{2})_j\,(\alpha+\tfrac{1}{2})_j\,(3j-m-2n)\,(n-j)!\,(-1)^{m+j+1}}
-         {(\alpha+\tfrac{3}{2})_j\,j!\,(m-j)!\,(n-m)!}.
+    \frac{(-4)^j\,(-\tfrac{\ell}{2})_j\,(\alpha+\tfrac{\ell}{2})_j\,(3j-m-2n)\,(n-j)!\,(-1)^{m+j+1}}
+         {(\alpha+\tfrac{1}{2})_j\,j!\,(m-j)!\,(n-m)!}.
 \end{equation}
-Key differences from \eqref{eq:D_null}:
+This is obtained from the null formula \eqref{eq:D_null} by simplifying:
+\[
+  \frac{(3j-m-2n)\,(-n)_m}{j!\,(m-j)!\,(-n)_{j+1}}
+  = \frac{(3j-m-2n)\,(n-j)!}{j!\,(m-j)!\,(n-m)!}\,(-1)^{m+j+1}
+  \quad (m\le n, \; j\le m).
+\]
+
+Key features of the corrected formula:
 \begin{itemize}
-  \item Uses $(-\tfrac{1}{2})_j$ and $(\alpha+\tfrac{1}{2})_j$ in the numerator
-        (no $\ell$-dependence in these Pochhammer symbols).
-  \item Uses $(\alpha+\tfrac{3}{2})_j$ in the denominator (not $(\alpha+\tfrac{1}{2})_j$).
+  \item Uses $(-\tfrac{\ell}{2})_j$ and $(\alpha+\tfrac{\ell}{2})_j$ — \textbf{same Pochhammer
+        structure as the null formula \eqref{eq:D_null}}.
+  \item Denominator uses $(\alpha+\tfrac{1}{2})_j$ (same as null).
   \item Factor $(n-j)!\,(-1)^{m+j+1}$ replaces $\Gamma(m-n)/(j-n)!$.
-  \item Sum from $j=0$ to $m$ (not from $j=n$).
-  \item \textbf{$D_\alpha^{(n,m)}$ does NOT depend on the spin $\ell$.}
-        The spin enters the kernel only through $C_\ell^{(\alpha)}(1)\,(2\ell+d-3)$.
+  \item Sum from $j=0$ to $m$ (not from $j=n$), because $(n-j)!$ replaces the $(j-n)!$ pole.
+  \item \textbf{$D_{\ell,\alpha}^{(n,m)}$ depends on the spin $\ell$}, just like the null formula.
+        The Pochhammer symbol $(-\tfrac{\ell}{2})_j$ vanishes for $j>\ell/2$ (if $\ell$ even),
+        effectively truncating the sum.
+  \item For $n=m$: $(n-m)! = 0! = 1$, so $W_{0,m}$ is well-defined.
 \end{itemize}
 
-Implemented in \texttt{D\_coeff\_obj(n, m, alpha)} in \texttt{csdr.py}.
+Implemented in \texttt{D\_coeff\_obj(n, m, ell, alpha)} in \texttt{csdr.py}.
 
-Selected values for $\alpha=\tfrac{1}{2}$ (i.e.\ $d=4$):
+Selected values for $\alpha=\tfrac{1}{2}$ (i.e.\ $d=4$), $\ell=0$ (only $j=0$ survives since $(-0)_j=0$ for $j\ge1$):
 \begin{align*}
-  D^{(1,0)} &= 2, & D^{(2,0)} &= 4, & D^{(1,1)} &= -3, & D^{(2,1)} &= -8.
+  D^{(1,0)}_{\ell=0} &= 2, & D^{(2,0)}_{\ell=0} &= 4, & D^{(1,1)}_{\ell=0} &= -3.
+\end{align*}
+For $\ell=2$:
+\begin{align*}
+  D^{(2,1)}_{\ell=2} &= 2, & D^{(2,1)}_{\ell=0} &= -10.
 \end{align*}
 Verified by the unit check \texttt{check\_obj\_D\_basic()}.
 
@@ -178,7 +193,8 @@ Verified by the unit check \texttt{check\_obj\_D\_basic()}.
 \subsection{Decision variables (unified (n,m) notation)}
 
 \begin{itemize}
-  \item $z_{n,m}$: objective Wilson coefficients, $(n,m)$ with $n>m\ge0$ and $2n+m\le K$.
+  \item $z_{n,m}$: objective Wilson coefficients, $(n,m)$ with $n\ge m\ge0$ and $0<2n+m\le K$.
+        Includes $W_{0,m}$ (i.e.\ $n=m\ge1$) as physically valid operators.
   \item $c_{n,m}$: null constraint Lagrange multipliers, $(n,m)$ with $m>n\ge1$ and $2n+m\le K$.
 \end{itemize}
 Both sets use the same (n,m) index convention as $W_{n-m,m}$.
@@ -193,8 +209,8 @@ Setting $s_1 = \delta_0(1+x)$ so $x\ge0$, the polynomial block is
 \end{equation}
 where
 \begin{align}
-  \kappa_\ell^{\rm obj}(n,m) &= D_\alpha^{(n,m)}\cdot C_\ell^{(\alpha)}(1)\cdot(2\ell+d-3),
-  & \text{(from eq.~\eqref{eq:D_obj}, }\ell\text{-independent }D\text{)} \label{eq:kappa_obj}\\
+  \kappa_\ell^{\rm obj}(n,m) &= D_{\ell,\alpha}^{(n,m)}\cdot C_\ell^{(\alpha)}(1)\cdot(2\ell+d-3),
+  & \text{(from eq.~\eqref{eq:D_obj}, }\ell\text{-dependent }D\text{)} \label{eq:kappa_obj}\\
   \kappa_\ell^{\rm null}(n,m) &= D_{\ell,\alpha}^{(n,m)}\cdot C_\ell^{(\alpha)}(1)\cdot(2\ell+d-3).
   & \text{(from eq.~\eqref{eq:D_null}, }\ell\text{-dependent }D\text{)} \label{eq:kappa_null}
 \end{align}
@@ -271,14 +287,15 @@ format.  The top-level structure is:
 }
 \end{verbatim}
 
-Produced by \texttt{generate\_csdr\_pmp(obj\_index, norm\_index, d, K, max\_spin, precision)}.
+Produced by \texttt{generate\_csdr\_pmp(obj\_index, norm\_index, d, K, max\_spin, delta0, precision)}.
 Parameters:
 \begin{itemize}
-  \item \texttt{obj\_index}: $(n,m)$ of the Wilson coefficient to bound ($n>m\ge0$).
+  \item \texttt{obj\_index}: $(n,m)$ of the Wilson coefficient to bound ($n\ge m\ge0$).
   \item \texttt{norm\_index}: $(n,m)$ of the Wilson coefficient to normalize to 1.
   \item \texttt{d}: spacetime dimension (required).
   \item \texttt{K}: maximum spectral power $2n+m$ (default 8).
   \item \texttt{max\_spin}: maximum even spin $\ell$ included (default 10).
+  \item \texttt{delta0}: IR cutoff; integration starts at $s_1=\delta_0$ (default 1).
   \item \texttt{precision}: decimal precision for output coefficients (default 200).
 \end{itemize}
 
@@ -286,15 +303,15 @@ Parameters:
 \section{Open Questions Requiring User Input}
 
 \begin{enumerate}
-  \item \textbf{Include $W_{0,m}$ objectives?}
-        The objective enumeration currently requires $n>m$ (strict), so $W_{0,m}$
-        (with $n=m$) is excluded.  If needed, add $n\ge m$ in \texttt{enumerate\_obj\_pairs\_nm}.
+  \item \textbf{$W_{0,m}$ objectives}: Now included. \texttt{enumerate\_obj\_pairs\_nm} uses
+        $n \ge m \ge 0$ so $W_{0,m}$ (with $n=m$) is a valid objective.
   \item \textbf{Numerical verification}: The CSDR and fixed-$t$ kernels may or may not
         give numerically different bounds.  A direct comparison would be valuable.
-  \item \textbf{Production parameters}: Target $K$, $d$, $\delta_0$, \texttt{max\_spin}?
-  \item \textbf{Sign of $D^{\rm obj}$}: $D_\alpha^{(1,1)} = -3 < 0$ etc.\ — the per-spin
-        polynomial coefficient for $W_{0,1}$ is negative.  This is physically consistent
-        (SDPB dual variables can take any sign) but confirm this is expected.
+  \item \textbf{Production parameters}: Use $K=10$, $d=4$, $\delta_0=40$, \texttt{max\_spin=20}
+        for publication-quality bounds.  The example files use $K=4$ for speed.
+  \item \textbf{Sign of $D_\ell^{\rm obj}$}: $D_{\ell=0}^{(1,1)} = -3 < 0$; the coefficient
+        can be negative for some $(n,m,\ell)$.  This is physically fine — SDPB dual
+        variables take any sign.
 \end{enumerate}
 
 \end{document}

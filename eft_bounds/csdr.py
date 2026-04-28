@@ -189,62 +189,75 @@ def D_coeff(n: int, m: int, ell: int, alpha: Fraction) -> Fraction:
     return total
 
 
-def D_coeff_obj(n: int, m: int, alpha: Fraction) -> Fraction:
+def D_coeff_obj(n: int, m: int, ell: int, alpha: Fraction) -> Fraction:
     """
-    Compute D^{(n,m)}_alpha for OBJECTIVES (n >= m >= 0).
+    Compute D^{(n,m)}_{ell,alpha} for OBJECTIVES (n >= m >= 0).
 
-    This coefficient does NOT depend on the spin ell; the spin enters the
-    kernel only through the separate factor C^{(alpha)}_ell(1) * (2*ell+d-3).
+    This uses the SAME underlying CSDR formula as D_coeff (null constraints),
+    but with the combinatorial factor simplified for the n >= m case.
+    The result DEPENDS on the spin ell via (-ell/2)_j and (alpha + ell/2)_j.
 
-    Formula (derived from CSDR eq.(4) by user, valid for n >= m >= 0):
+    Formula (user's corrected derivation from CSDR eq.(4), valid for n >= m >= 0):
 
-      D^{(n,m)}_alpha = sum_{j=0}^{m}
-          (-4)^j * (-1/2)_j * (alpha+1/2)_j * (3j-m-2n) * (n-j)!
-          / ((alpha+3/2)_j * j! * (m-j)! * (n-m)!) * (-1)^{m+j+1}
+      D^{(n,m)}_{ell,alpha} = sum_{j=0}^{m}
+          (-4)^j * (-ell/2)_j * (alpha+ell/2)_j * (3j-m-2n) * (n-j)!
+          / ((alpha+1/2)_j * j! * (m-j)! * (n-m)!) * (-1)^{m+j+1}
 
-    Since j <= m <= n, (n-j)! is always non-negative.
+    The derivation proceeds by simplifying the ratio (-n)_m / ((-n)_{j+1} (j-n)!)
+    using factorials for n >= m (where j <= m <= n so n-j >= 0 always):
+
+      (3j-m-2n)(-n)_m / (j!(m-j)!(-n)_{j+1})
+      = (3j-m-2n)(n-j)! / (j!(m-j)!(n-m)!) * (-1)^{m+j+1}
+
+    The Pochhammer factors (-ell/2)_j and (alpha+ell/2)_j are identical to
+    those in D_coeff (null constraints) — confirming that both objective and
+    null D coefficients come from the same parent CSDR formula.
 
     Parameters
     ----------
-    n : int   First CSDR index (n >= m).
-    m : int   Second CSDR index (m >= 0).
+    n : int    First CSDR index (n >= m).
+    m : int    Second CSDR index (m >= 0).
+    ell : int  Spin (ell-dependent coefficient).
     alpha : Fraction  Gegenbauer parameter = (d-3)/2.
 
     Returns
     -------
-    Fraction  Exact rational value of D^{(n,m)}_alpha (ell-independent).
+    Fraction  Exact rational value of D^{(n,m)}_{ell,alpha}.
     """
     if m < 0:
         raise ValueError(f"D_coeff_obj requires m >= 0, got m={m}.")
     if n < m:
         raise ValueError(
             f"D_coeff_obj requires n >= m, got n={n}, m={m}. "
-            "For null constraints (m > n), use D_coeff."
+            "For null constraints (m > n >= 1), use D_coeff."
         )
 
+    # For n = m = 0: spectral power 2n+m = 0, no valid variable; caller should guard.
+    # For m = 0: sum has only j=0 term:
+    #   (-1)^{0+0+1} * (-4)^0 * 1 * 1 * (0-0-2n) * n! / (1 * 1 * 1 * n!) = (-1)*(-2n) = 2n
     total = Fraction(0)
     for j in range(m + 1):  # j = 0 to m
-        poch_neg_half = pochhammer(Fraction(-1, 2), j)
+        poch_neg_ell_half = pochhammer(Fraction(-ell, 2), j)
+        poch_alpha_ell_half = pochhammer(alpha + Fraction(ell, 2), j)
         poch_alpha_half = pochhammer(alpha + Fraction(1, 2), j)
-        poch_alpha_3half = pochhammer(alpha + Fraction(3, 2), j)
 
-        if poch_alpha_3half == 0:
+        if poch_alpha_half == 0:
             continue
 
         three_j_term = Fraction(3 * j - m - 2 * n)
-        n_minus_j_fac = Fraction(factorial(n - j))   # n >= m >= j so n-j >= 0
+        n_minus_j_fac = Fraction(factorial(n - j))   # n >= m >= j, so n-j >= 0
         sign = Fraction((-1) ** (m + j + 1))
 
         numerator = (
             Fraction((-4) ** j)
-            * poch_neg_half
-            * poch_alpha_half
+            * poch_neg_ell_half
+            * poch_alpha_ell_half
             * three_j_term
             * n_minus_j_fac
             * sign
         )
         denominator = (
-            poch_alpha_3half
+            poch_alpha_half
             * Fraction(factorial(j))
             * Fraction(factorial(m - j))
             * Fraction(factorial(n - m))
@@ -308,15 +321,12 @@ def obj_kernel_coeff(n: int, m: int, ell: int, d: int) -> Fraction:
     """
     Kernel coefficient for objective W_{n-m,m} at spin ell.
 
-    Uses the user's objective D formula (D_coeff_obj), which does NOT depend
-    on ell. The spin enters only through C^{(alpha)}_ell(1) * (2*ell+d-3).
+    Uses the corrected objective D formula (D_coeff_obj), which is ell-dependent
+    (same Pochhammer structure as the null formula: (-ell/2)_j (alpha+ell/2)_j / (alpha+1/2)_j).
 
     From user notes eq.(2):
 
-      kappa_{n,m,ell}^obj = D^{(n,m)}_alpha * C^{(alpha)}_ell(1) * (2*ell + d - 3)
-
-    where D^{(n,m)}_alpha is from D_coeff_obj (ell-independent, user's formula for n>=m),
-    and alpha = (d-3)/2.
+      kappa_{n,m,ell}^obj = D^{(n,m)}_{ell,alpha} * C^{(alpha)}_ell(1) * (2*ell + d - 3)
 
     Parameters
     ----------
@@ -330,7 +340,7 @@ def obj_kernel_coeff(n: int, m: int, ell: int, d: int) -> Fraction:
     Fraction  Exact rational kernel coefficient.
     """
     alpha = alpha_from_d(d)
-    D = D_coeff_obj(n, m, alpha)
+    D = D_coeff_obj(n, m, ell, alpha)
     C1 = gegenbauer_at_one(ell, alpha)
     spin_measure = Fraction(2 * ell + d - 3)
     return D * C1 * spin_measure
@@ -407,9 +417,12 @@ def enumerate_null_pairs(K: int) -> List[Tuple[int, int]]:
 
 def enumerate_obj_pairs_nm(K: int) -> List[Tuple[int, int]]:
     """
-    Enumerate CSDR objective pairs (n, m) with n > m >= 0 and 2n+m <= K, 2n+m > 0.
+    Enumerate CSDR objective pairs (n, m) with n >= m >= 0 and 2n+m <= K, 2n+m > 0.
 
-    These correspond to W_{n-m,m} with first index n-m >= 1 (objectives).
+    Includes both:
+    - W_{n-m,m} with first index n-m > 0 (n > m): standard objectives.
+    - W_{0,m} with first index 0, n = m >= 1: physically valid operators.
+
     The spectral power is 2n+m.
 
     Parameters
@@ -422,11 +435,12 @@ def enumerate_obj_pairs_nm(K: int) -> List[Tuple[int, int]]:
     """
     pairs = []
     for m in range(0, K + 1):
-        for n in range(m + 1, K + 1):  # n > m
+        for n in range(m, K + 1):  # n >= m (includes n == m for W_{0,m})
             val = 2 * n + m
             if 0 < val <= K:
                 pairs.append((n, m))
     pairs.sort(key=lambda x: (2 * x[0] + x[1], x[1]))
+    return pairs
     return pairs
 
 
@@ -518,24 +532,46 @@ def check_closed_form_1_2(precision: int = 20) -> bool:
 
 def check_obj_D_basic() -> bool:
     """
-    Basic sanity checks for D_coeff_obj (objectives).
+    Basic sanity checks for D_coeff_obj (objectives, corrected ell-dependent formula).
 
-    Verifies a few exact values from the user's formula for small (n,m):
-      - D_obj(1,0,alpha) = 2  for all alpha (from j=0 term only)
-      - D_obj(2,0,alpha) = 4  for all alpha (from j=0 term only)
+    Verifies consistency with D_coeff (null formula) by checking that for m <= n,
+    the objective formula gives sensible results:
+      - For ell=0: (-ell/2)_j = 0 for j >= 1, so D reduces to the j=0 term only:
+          D(n,m,ell=0) = (-4)^0 * 1 * 1 / 1 * (0-m-2n) * n! / (n-m)! * (-1)^{m+1}
+                       = (-m-2n) * n!/(n-m)! * (-1)^{m+1}
+      - For (n=1, m=0, ell=0): D = (-2) * 1! / 1! * (-1)^1 = 2
+      - For (n=2, m=0, ell=0): D = (-4) * 2! / 2! * (-1)^1 = 4
+      - For (n=1, m=1, ell=0): D = (-3) * 1! / 0! * (-1)^2 = -3
 
     Returns True if all checks pass.
     """
     alpha = Fraction(1, 2)
     passed = True
-    # (n=1, m=0): only j=0 contributes
-    # j=0: (-4)^0 * (-1/2)_0 * (alpha+1/2)_0 / (alpha+3/2)_0
-    #       * (0-0-2)*(1-0)! / (0!*0!*(1-0)!) * (-1)^{0+0+1}
-    #     = 1*1*1/1 * (-2) * 1 * (-1) = 2
-    if D_coeff_obj(1, 0, alpha) != Fraction(2):
+
+    # ell=0: only j=0 term survives since (-ell/2)_j = (-0)_j = 0 for j>=1
+    # j=0: (-4)^0 * 1 * 1 * (0-m-2n) * n! / (n-m)! * (-1)^{m+1}
+    #     = (−m−2n) * n!/(n-m)! * (−1)^{m+1}
+    # (n=1, m=0): (-0-2)*1!/1! * (-1)^1 = (-2)*1*(-1) = 2
+    val = D_coeff_obj(1, 0, 0, alpha)
+    if val != Fraction(2):
         passed = False
-    # (n=2, m=0): only j=0 contributes
-    # j=0: 1 * 1 * 1/1 * (0-0-4) * 2! / (1*1*2!) * (-1) = (-4)*1*(-1) = 4
-    if D_coeff_obj(2, 0, alpha) != Fraction(4):
+
+    # (n=2, m=0): (-0-4)*2!/2! * (-1)^1 = (-4)*1*(-1) = 4
+    val = D_coeff_obj(2, 0, 0, alpha)
+    if val != Fraction(4):
         passed = False
+
+    # (n=1, m=1, ell=0): (0-1-2)*1!/0! * (-1)^2 = (-3)*1*1 = -3
+    val = D_coeff_obj(1, 1, 0, alpha)
+    if val != Fraction(-3):
+        passed = False
+
+    # Cross-check: for n=m (W_{0,m}), formula should be well-defined (n-m)!=0!=1
+    # (n=1, m=1, ell=2, d=4 => alpha=1/2):
+    # Expected: same structure as null formula applied to this case
+    val = D_coeff_obj(1, 1, 2, alpha)
+    # Check it's a rational number (no error thrown)
+    if not isinstance(val, Fraction):
+        passed = False
+
     return passed

@@ -90,6 +90,7 @@ def _csdr_spin_block(
     K: int,
     d: int,
     precision: int,
+    delta0: "Fraction" = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Build one SDPB PositiveMatrixWithPrefactor block for spin ell.
@@ -97,28 +98,37 @@ def _csdr_spin_block(
     Simplification record for this block
     -------------------------------------
     1. Compute alpha = (d-3)/2.
-    2. For each objective (n,m) with n>m>=0:
-         kappa = D^{(n,m)}_alpha * C^alpha_ell(1) * (2ell+d-3)
-                 [obj_kernel_coeff, user's objective D formula, ell-independent]
+    2. For each objective (n,m) with n>=m>=0:
+         D = D_coeff_obj(n, m, ell, alpha)   [corrected, ell-dependent]
+         kappa = D * C^alpha_ell(1) * (2ell+d-3) / delta0^{2n+m}
          poly  = kappa * (1+x)^{K-(2n+m)}
     3. For each null constraint (n,m) with m>n>=1:
-         kappa = D^{(n,m)}_{ell,alpha} * C^alpha_ell(1) * (2ell+d-3)
-                 [null_kernel_coeff, CSDR eq.(11), ell-dependent]
+         D = D_coeff(n, m, ell, alpha)        [CSDR eq.(11), ell-dependent]
+         kappa = D * C^alpha_ell(1) * (2ell+d-3) / delta0^{2n+m}
          poly  = kappa * (1+x)^{K-(2n+m)}
     4. Prefactor: e^{-x} / (1+x)^K  (DampedRational, pole at x=-1, multiplicity K).
-    5. Assemble 1×1 polynomial block.
+       Variable substitution: x = s1/delta0 - 1 >= 0.
+    5. Assemble 1x1 polynomial block.
     """
+    if delta0 is None:
+        delta0 = Fraction(1)
+
+    def scale(power: int) -> Fraction:
+        return Fraction(1) / (delta0 ** power)
+
     poly_vectors: List[List[Fraction]] = []
 
     for (n, m) in obj_pairs:
-        kappa = obj_kernel_coeff(n, m, ell, d)
-        exp = K - spectral_power_nm(n, m)
+        sp = spectral_power_nm(n, m)
+        kappa = obj_kernel_coeff(n, m, ell, d) * scale(sp)
+        exp = K - sp
         poly = poly_pad(poly_scale(poly_expand_1px(exp), kappa), K + 1)
         poly_vectors.append(poly)
 
     for (n, m) in null_pairs:
-        kappa = null_kernel_coeff(n, m, ell, d)
-        exp = K - (2 * n + m)
+        sp = 2 * n + m
+        kappa = null_kernel_coeff(n, m, ell, d) * scale(sp)
+        exp = K - sp
         poly = poly_pad(poly_scale(poly_expand_1px(exp), kappa), K + 1)
         poly_vectors.append(poly)
 
@@ -126,8 +136,6 @@ def _csdr_spin_block(
         return None
 
     e_inv = _compute_e_inverse(precision)
-    # SDPB PMP format uses "DampedRational" key (not "prefactor").
-    # See test/data/end-to-end_tests/1d/input/pmp.json for the canonical example.
     damped_rational = {
         "base": e_inv,
         "constant": "1",
@@ -157,18 +165,20 @@ def generate_csdr_pmp(
     max_spin: int = 10,
     precision: int = 200,
     bound_direction: str = "upper",
+    delta0: int = 1,
 ) -> Dict[str, Any]:
     """
     Generate SDPB PMP JSON for bounding W_{obj_index} / W_{norm_index}
     using CSDR dispersion relations (user notes eq.(2)).
 
     Uses unified (n,m) notation for both objectives and null constraints:
-      - Objectives: n > m >= 0, spectral power 2n+m, D from D_coeff_obj
+      - Objectives: n >= m >= 0, spectral power 2n+m, D from D_coeff_obj (ell-dependent)
       - Null:       m > n >= 1, spectral power 2n+m, D from D_coeff (CSDR eq.11)
 
     Simplification record
     ---------------------
-    1. Enumerate objective pairs (n>m>=0, 2n+m<=K) via csdr.enumerate_obj_pairs_nm.
+    1. Enumerate objective pairs (n>=m>=0, 2n+m<=K) via csdr.enumerate_obj_pairs_nm.
+       Includes W_{0,m} (n=m) as physically valid operators.
     2. Enumerate null constraint pairs (m>n>=1, 2n+m<=K) via csdr.enumerate_null_pairs.
     3. Build decision variable vector z = [z_{obj pairs...}, c_{null pairs...}].
        - Positions 0..N_obj-1: objective Wilson coefficients (indexed by n,m).
@@ -180,13 +190,14 @@ def generate_csdr_pmp(
 
     Parameters
     ----------
-    obj_index : (n, m)      Wilson coefficient W_{n-m,m} to bound (n>m>=0).
-    norm_index : (n, m)     Wilson coefficient to normalize to 1 (n>m>=0).
+    obj_index : (n, m)      Wilson coefficient W_{n-m,m} to bound (n>=m>=0).
+    norm_index : (n, m)     Wilson coefficient to normalize to 1 (n>=m>=0).
     d : int                 Spacetime dimension (required, no default).
     K : int                 Maximum spectral power 2n+m (default 8).
     max_spin : int          Maximum even spin (default 10).
     precision : int         Output decimal precision (default 200).
     bound_direction : str   "upper" (maximize) or "lower" (minimize).
+    delta0 : int            IR cutoff (integration starts at s1 = delta0). Default 1.
 
     Returns
     -------
@@ -197,18 +208,20 @@ def generate_csdr_pmp(
 
     if obj_index not in obj_pairs:
         raise ValueError(
-            f"obj_index {obj_index} not in objective pairs for K={K} "
-            f"(need p>=1, q>=0, 2p+3q<={K})."
+            f"obj_index {obj_index} not in objective pairs for K={K}. "
+            f"Available: {obj_pairs}"
         )
     if norm_index not in obj_pairs:
         raise ValueError(
-            f"norm_index {norm_index} not in objective pairs for K={K} "
-            f"(need p>=1, q>=0, 2p+3q<={K})."
+            f"norm_index {norm_index} not in objective pairs for K={K}. "
+            f"Available: {obj_pairs}"
         )
 
     N_obj = len(obj_pairs)
     N_null = len(null_pairs)
     N = N_obj + N_null
+
+    delta0_frac = Fraction(delta0)
 
     # Objective vector
     b: List[Fraction] = [Fraction(0)] * N
@@ -230,6 +243,7 @@ def generate_csdr_pmp(
             K=K,
             d=d,
             precision=precision,
+            delta0=delta0_frac,
         )
         if block is not None:
             pmp_array.append(block)
@@ -244,6 +258,7 @@ def generate_csdr_pmp(
             "alpha": fraction_to_str(alpha_from_d(d), precision),
             "K_max_order": K,
             "max_spin": max_spin,
+            "delta0": delta0,
             "n_obj_pairs": N_obj,
             "n_null_pairs": N_null,
             "n_decision_variables": N,
@@ -252,9 +267,9 @@ def generate_csdr_pmp(
             "obj_index": list(obj_index),
             "norm_index": list(norm_index),
             "note": (
-                "S1,S2,S3 are Mandelstam minus mu/3 so S1+S2+S3=0. "
-                "The W_{p,q} basis uses x=-(S1*S2+S2*S3+S3*S1), y=-S1*S2*S3. "
-                "d is a free parameter, not fixed to 4."
+                "Objective pairs include W_{0,m} (n=m). "
+                "D formula is ell-dependent for both objectives and null constraints. "
+                "Variable: x = s1/delta0 - 1 >= 0."
             ),
         },
     }
