@@ -49,13 +49,13 @@ from typing import Any, Dict, List, Optional, Tuple
 from .csdr import (
     alpha_from_d,
     enumerate_null_pairs,
-    enumerate_obj_pairs,
+    enumerate_obj_pairs_nm,
     null_kernel_coeff,
     obj_kernel_coeff,
     poly_expand_1px,
     poly_pad,
     poly_scale,
-    s1_power,
+    spectral_power_nm,
 )
 from .physics import fraction_to_str
 
@@ -97,20 +97,22 @@ def _csdr_spin_block(
     Simplification record for this block
     -------------------------------------
     1. Compute alpha = (d-3)/2.
-    2. For each objective (p,q):
-         kappa = C^alpha_ell(1) * (2ell+d-3)      [obj_kernel_coeff from csdr.py]
-         poly  = kappa * (1+x)^{K-(2p+3q)}        [expand binomial, scale by kappa]
-    3. For each null constraint (n,m):
-         kappa = D^{(n,m)}_ell * C^alpha_ell(1) * (2ell+d-3)  [null_kernel_coeff from csdr.py]
+    2. For each objective (n,m) with n>m>=0:
+         kappa = D^{(n,m)}_alpha * C^alpha_ell(1) * (2ell+d-3)
+                 [obj_kernel_coeff, user's objective D formula, ell-independent]
          poly  = kappa * (1+x)^{K-(2n+m)}
-    4. Prefactor: e^{-x} / (1+x)^K  (pole at x=-1, multiplicity K).
+    3. For each null constraint (n,m) with m>n>=1:
+         kappa = D^{(n,m)}_{ell,alpha} * C^alpha_ell(1) * (2ell+d-3)
+                 [null_kernel_coeff, CSDR eq.(11), ell-dependent]
+         poly  = kappa * (1+x)^{K-(2n+m)}
+    4. Prefactor: e^{-x} / (1+x)^K  (DampedRational, pole at x=-1, multiplicity K).
     5. Assemble 1×1 polynomial block.
     """
     poly_vectors: List[List[Fraction]] = []
 
-    for (p, q) in obj_pairs:
-        kappa = obj_kernel_coeff(p, q, ell, d)
-        exp = K - s1_power(p, q)
+    for (n, m) in obj_pairs:
+        kappa = obj_kernel_coeff(n, m, ell, d)
+        exp = K - spectral_power_nm(n, m)
         poly = poly_pad(poly_scale(poly_expand_1px(exp), kappa), K + 1)
         poly_vectors.append(poly)
 
@@ -160,16 +162,16 @@ def generate_csdr_pmp(
     Generate SDPB PMP JSON for bounding W_{obj_index} / W_{norm_index}
     using CSDR dispersion relations (user notes eq.(2)).
 
-    This is the primary PMP generator.  It uses CSDR kernels, not the
-    Extremal EFT spectral functions.  Results will differ from the
-    Extremal EFT paper (different subtraction schemes).
+    Uses unified (n,m) notation for both objectives and null constraints:
+      - Objectives: n > m >= 0, spectral power 2n+m, D from D_coeff_obj
+      - Null:       m > n >= 1, spectral power 2n+m, D from D_coeff (CSDR eq.11)
 
     Simplification record
     ---------------------
-    1. Enumerate objective pairs (p>=1, q>=0, 2p+3q<=K) via csdr.enumerate_obj_pairs.
+    1. Enumerate objective pairs (n>m>=0, 2n+m<=K) via csdr.enumerate_obj_pairs_nm.
     2. Enumerate null constraint pairs (m>n>=1, 2n+m<=K) via csdr.enumerate_null_pairs.
     3. Build decision variable vector z = [z_{obj pairs...}, c_{null pairs...}].
-       - Positions 0..N_obj-1: objective Wilson coefficients.
+       - Positions 0..N_obj-1: objective Wilson coefficients (indexed by n,m).
        - Positions N_obj..N_obj+N_null-1: null constraint Lagrange multipliers.
     4. Objective vector b: b[i] = +1 (upper) or -1 (lower) at obj_index position.
     5. Normalization vector c: c[i] = 1 at norm_index position.
@@ -178,10 +180,10 @@ def generate_csdr_pmp(
 
     Parameters
     ----------
-    obj_index : (p, q)      Wilson coefficient to bound.
-    norm_index : (p, q)     Wilson coefficient to normalize to 1.
+    obj_index : (n, m)      Wilson coefficient W_{n-m,m} to bound (n>m>=0).
+    norm_index : (n, m)     Wilson coefficient to normalize to 1 (n>m>=0).
     d : int                 Spacetime dimension (required, no default).
-    K : int                 Maximum spectral power 2p+3q / 2n+m (default 8).
+    K : int                 Maximum spectral power 2n+m (default 8).
     max_spin : int          Maximum even spin (default 10).
     precision : int         Output decimal precision (default 200).
     bound_direction : str   "upper" (maximize) or "lower" (minimize).
@@ -190,7 +192,7 @@ def generate_csdr_pmp(
     -------
     dict  SDPB PMP JSON.
     """
-    obj_pairs = enumerate_obj_pairs(K)
+    obj_pairs = enumerate_obj_pairs_nm(K)
     null_pairs = enumerate_null_pairs(K)
 
     if obj_index not in obj_pairs:
@@ -278,15 +280,15 @@ def generate_pmp_for_ratio_bound(
     """
     Generate PMP for bounding W_{numerator_index} / W_{denominator_index}.
 
-    This is the main entry point used by run_bounds.py.
-    Uses CSDR kernels (user notes eq.(2)).
+    Both indices use (n,m) notation where W_{n-m,m} with n>m>=0.
+    Uses CSDR kernels (user notes eq.(2)) with objective D from user's formula.
 
     Parameters
     ----------
-    numerator_index : (p, q)    Wilson coefficient in numerator.
-    denominator_index : (p, q)  Wilson coefficient in denominator (normalized to 1).
+    numerator_index : (n, m)    Wilson coefficient in numerator (n>m>=0).
+    denominator_index : (n, m)  Wilson coefficient in denominator (n>m>=0).
     max_spin : int               Maximum even spin.
-    max_order : int              Maximum spectral power K = 2p+3q.
+    max_order : int              Maximum spectral power K = 2n+m.
     d : int                      Spacetime dimension.
     precision : int              Output precision.
     bound_direction : str        "upper" or "lower".
@@ -319,11 +321,12 @@ def generate_pmp_json(
     """
     Generate a PMP JSON for bounding a specific objective Wilson coefficient.
 
-    For backward compatibility.  Normalizes the first available pair != objective_index.
+    objective_index uses (n,m) notation: W_{n-m,m} with n>m>=0.
+    Normalizes the first available pair != objective_index.
 
     Parameters
     ----------
-    objective_index : (p, q)  Wilson coefficient to minimize.
+    objective_index : (n, m)  Wilson coefficient to minimize (n>m>=0).
     max_spin, max_order, d, precision: as in generate_csdr_pmp.
     **_kwargs : ignored for backward compatibility.
 
@@ -331,12 +334,11 @@ def generate_pmp_json(
     -------
     dict  PMP JSON.
     """
-    obj_pairs = enumerate_obj_pairs(max_order)
+    obj_pairs = enumerate_obj_pairs_nm(max_order)
     if objective_index not in obj_pairs:
         raise ValueError(
             f"objective_index {objective_index} not found in pairs for K={max_order}."
         )
-    # Choose first pair that is not the objective as normalization
     norm_index = next(
         (p for p in obj_pairs if p != objective_index),
         None,

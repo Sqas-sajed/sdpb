@@ -52,8 +52,10 @@ from .csdr import (
     D_coeff,
     alpha_from_d,
     check_closed_form_1_2,
+    check_obj_D_basic,
     enumerate_null_pairs,
     enumerate_obj_pairs,
+    enumerate_obj_pairs_nm,
     gegenbauer_at_one,
     null_kernel_coeff,
     obj_kernel_coeff,
@@ -61,6 +63,7 @@ from .csdr import (
     poly_pad,
     poly_scale,
     s1_power,
+    spectral_power_nm,
 )
 from .physics import fraction_to_str
 
@@ -319,6 +322,14 @@ def run_reliability_checks(precision: int = 80) -> Dict[str, object]:
         "note": "Checks csdr.D_coeff against closed-form for (n,m)=(1,2), several ell",
     })
 
+    # Check 4: objective D_coeff_obj basic sanity
+    obj_ok = check_obj_D_basic()
+    checks.append({
+        "name": "csdr_check_obj_D_basic",
+        "passed": obj_ok,
+        "note": "Checks D_coeff_obj: D(1,0)=2 and D(2,0)=4 for alpha=1/2",
+    })
+
     all_passed = all(check["passed"] for check in checks)
     return {"passed": all_passed, "examples": checks}
 
@@ -369,15 +380,16 @@ def _spin_block_csdr(
     """
     poly_vectors: List[List[Fraction]] = []
 
-    # Objective components: kernel = C^alpha_ell(1)*(2ell+d-3)*(1+x)^{K-2p-3q}
-    for (p, q) in obj_pairs:
-        kappa = obj_kernel_coeff(p, q, ell, d)
-        exponent = K - s1_power(p, q)
+    # Objective components: use user's D formula (ell-independent).
+    # obj_pairs use (n,m) notation: n>m>=0, spectral power 2n+m.
+    for (n, m) in obj_pairs:
+        kappa = obj_kernel_coeff(n, m, ell, d)
+        exponent = K - spectral_power_nm(n, m)
         base_poly = poly_expand_1px(exponent)
         scaled = poly_scale(base_poly, kappa)
         poly_vectors.append(poly_pad(scaled, K + 1))
 
-    # Null-constraint components: kernel = D*C^alpha_ell(1)*(2ell+d-3)*(1+x)^{K-2n-m}
+    # Null-constraint components: CSDR eq.(11) D (ell-dependent).
     for (n, m) in null_pairs:
         kappa = null_kernel_coeff(n, m, ell, d)
         exponent = K - (2 * n + m)
@@ -405,7 +417,7 @@ def _spin_block_csdr(
     ]]
 
     return {
-        "prefactor": prefactor,
+        "DampedRational": prefactor,
         "polynomials": [poly_json],
     }
 
@@ -465,19 +477,19 @@ def build_csdr_pmp_json(
     -------
     dict  SDPB PMP JSON structure.
     """
-    obj_pairs = enumerate_obj_pairs(K)
+    obj_pairs = enumerate_obj_pairs_nm(K)
     null_pairs = enumerate_null_pairs(K)
 
     # Check indices are in enumeration
     if obj_index not in obj_pairs:
         raise ValueError(
             f"obj_index {obj_index} not in enumerated objective pairs for K={K}. "
-            f"Need p>=1, q>=0, 2p+3q<={K}."
+            f"Need n>m>=0, 2n+m<={K} (using (n,m) notation)."
         )
     if norm_index not in obj_pairs:
         raise ValueError(
             f"norm_index {norm_index} not in enumerated objective pairs for K={K}. "
-            f"Need p>=1, q>=0, 2p+3q<={K}."
+            f"Need n>m>=0, 2n+m<={K} (using (n,m) notation)."
         )
 
     # Decision variables: objectives first, then null constraints

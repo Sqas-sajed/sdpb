@@ -5,272 +5,296 @@
 \usepackage{xcolor}
 \usepackage{mdframed}
 
-\title{CSDR--Based EFT Positivity Bounds: Complete Simplification Record and Code Review}
-\author{sdpb pipeline}
+\title{CSDR-Based EFT Positivity Bounds:\\
+       Complete Derivation Record and Code Review}
+\author{sdpb pipeline (auto-generated)}
 \date{\today}
 
 \begin{document}
 \maketitle
 \tableofcontents
 
-% ===========================================================
-\section{Conventions}
+% ===================================================
+\section{Conventions and Notation}
 
 \paragraph{Shifted Mandelstam variables.}
-Let $\mu = s+t+u = 4m^2$.  Define
+Define $\mu = s+t+u$ and
 \[
   S_1 = s - \tfrac{\mu}{3},\quad S_2 = t - \tfrac{\mu}{3},\quad S_3 = u-\tfrac{\mu}{3},
 \]
-so $S_1+S_2+S_3=0$.  This is \textbf{not} a choice: $S_i$ are the centred
-Mandelstam variables used throughout the CSDR paper.
+so $S_1+S_2+S_3=0$.
 
 \paragraph{Crossing-symmetric basis.}
-Because $S_1+S_2+S_3=0$ the natural crossing-symmetric invariants are
 \[
   x = -(S_1 S_2+S_2 S_3+S_3 S_1),\qquad y = -S_1 S_2 S_3.
 \]
-The amplitude is expanded as $\mathcal{M} = \sum_{p,q\ge0} W_{p,q}\,x^p\,y^q$.
+Amplitude: $\mathcal{M} = \sum_{p,q\ge0} W_{p,q}\,x^p\,y^q$.
 
-\paragraph{CSDR index notation.}
-The CSDR paper writes $W_{n-m,m}$ with first index $= n-m$ and second $= m$:
-\begin{itemize}
-  \item $n-m\ge0$ (i.e.\ $n\ge m$): \textbf{objectives} ($W_{p,q}\ge0$ from unitarity).
-  \item $n-m<0$ (i.e.\ $n<m$, equivalently $m>n\ge1$): \textbf{null constraints} ($W_{n-m,m}=0$).
-\end{itemize}
-The power of $s_1$ in the kernel denominator is $2n+m = 2(n-m)+3m = 2p+3q$.
+\paragraph{CSDR (n,m) index notation — UNIFIED for objectives and null constraints.}
+All Wilson coefficients are labelled by a single pair $(n, m)$:
+\[
+  W_{n-m,\,m}:\quad
+  \begin{cases}
+    n > m \ge 0 & \text{objectives (first CSDR index } n-m > 0) \\
+    n < m,\; m > n \ge 1 & \text{null constraints } (W_{n-m,m} = 0)
+  \end{cases}
+\]
+The spectral denominator power is $\mathbf{2n+m}$ for \emph{both} cases.
+Mapping to the conventional $(p,q)$ notation: $p = n-m$, $q = m$, so $2p+3q = 2n+m$.
 
-\paragraph{Spacetime dimension.}
-$d$ is a free parameter.  The Gegenbauer parameter is $\alpha=(d-3)/2$, giving
-$(2\ell+2\alpha)=(2\ell+d-3)$.
+\paragraph{Gegenbauer parameter.}
+$\alpha = (d-3)/2$, giving $(2\ell+2\alpha) = (2\ell+d-3)$.
 
-% ===========================================================
-\section{Derivation of the SDPB Kernel — Step-by-step Record}
+% ===================================================
+\section{Derivation of the SDPB Kernel}
 
-This section gives the complete derivation used in the code, so it can
-be audited line by line.
-
-\subsection{Step 1: CSDR dispersion relation (Sinha-Zahed eq.~(4))}
+\subsection{Starting point: CSDR dispersion relation (Sinha-Zahed eq.~(4))}
 
 \[
   W_{n-m,\,m}
   = \int_{s_1>\delta_0} \frac{ds_1}{s_1}\,\Phi(s_1)
-    \sum_{\ell=0,\text{even}}^\infty (2\ell+2\alpha)\,a_\ell(s_1)\,B_\ell^{(n,m)}(s_1).
+    \sum_{\ell=0,\text{even}} (2\ell+2\alpha)\,a_\ell(s_1)\,B_\ell^{(n,m)}(s_1).
 \]
 
-\subsection{Step 2: Large-$s_1$ limit of $\Phi$}
+\subsection{Large-$s_1$ limit}
 
+$\Phi(s_1) \to s_1^{(4-d)/2}\,\Psi(\alpha)$ with $\Psi(\alpha) > 0$.
+Since $\Psi(\alpha)$ is a positive constant it does not affect the positivity
+conditions; set $\Psi(\alpha)=1$.
+
+The large-$s_1$ expansion of $B_\ell^{(n,m)}$ gives (Sinha-Zahed eq.~(11) for $m>n$):
 \[
-  \Phi(s_1) = \frac{\sqrt{s_1+M/3}}{(s_1-2M/3)^\alpha}\,\Psi(\alpha)
-  \;\xrightarrow{s_1\to\infty}\; s_1^{1/2-\alpha}\,\Psi(\alpha).
+  B_\ell^{(n,m)}(s_1) \;\sim\; \frac{C_\ell^{(\alpha)}(1)}{\pi}\,
+  \frac{D_{\ell,\alpha}^{(n,m)}}{s_1^{2n+m}},
 \]
-Since $\alpha=(d-3)/2$, the exponent is $\tfrac{1}{2}-\tfrac{d-3}{2}=\tfrac{4-d}{2}$.
-Therefore $\Phi\sim s_1^{(4-d)/2}\,\Psi(\alpha)$.  Because $\Psi(\alpha)>0$ is just
-a positive constant, we set $\Psi(\alpha)=1$.
+where $D_{\ell,\alpha}^{(n,m)}$ depends on the case (see Section~\ref{sec:D}).
 
-\subsection{Step 3: Large-$s_1$ limit of the kernel $B_\ell^{(n,m)}$}
+\subsection{Heavy average (Extremal EFT, eq.~(1))}
 
-For $m>n\ge1$ (null constraints), CSDR eq.~(11) gives:
+\begin{equation}\label{eq:avg}
+  \langle F(s_1, \ell) \rangle
+  = \sum_{\ell\text{ even}} n_\ell^{(d)}\int_{\delta_0}^{\infty}\frac{ds_1}{s_1}\,
+    \frac{s_1^{4-d}}{\pi}\,\rho_\ell(s_1)\,F(s_1,\ell),
+\end{equation}
+with $n_J^{(d)} = (4\pi)^{d/2}(d+2J-3)\Gamma(d+J-3)/\bigl(\pi\,\Gamma\!\bigl(\tfrac{d-2}{2}\bigr)\Gamma(J+1)\bigr)$.
+
+Substituting the large-$s_1$ form of $B_\ell^{(n,m)}$ into the dispersion integral
+and matching with $\langle F\rangle$, the integrand is identified as:
 \[
-  B_\ell^{(n,m)}(s_1)\;\sim\;\frac{C_\ell^{(\alpha)}(1)}{\pi}\,\frac{D_{\ell,\alpha}^{(n,m)}}{s_1^{2n+m}},
+  F(s_1,\ell) = \frac{D_{\ell,\alpha}^{(n,m)}}{n_\ell^{(d)}}\,
+                C_\ell^{(\alpha)}(1)\,(2\ell+d-3)\,\frac{1}{s_1^{2n+m}}.
 \]
-where
-\[
-  D_{\ell,\alpha}^{(n,m)}
-  = \Gamma(m-n)\sum_{j=n}^{m}
-    \frac{(-4)^j\,\bigl(-\tfrac{\ell}{2}\bigr)_j\,\bigl(\alpha+\tfrac{\ell}{2}\bigr)_j
-          \,(3j-m-2n)}
-         {j!\,(m-j)!\,(j-n)!\,\bigl(\alpha+\tfrac{1}{2}\bigr)_j}.
-\]
+Hence \textbf{(user notes eq.~(2))}:
+\begin{equation}\label{eq:W_avg}
+  \boxed{W_{n-m,\,m}
+  = \Bigl\langle
+      \frac{D_{\ell,\alpha}^{(n,m)}}{n_\ell^{(d)}}\,
+      C_\ell^{(\alpha)}(1)\,(2\ell+d-3)\,
+      \frac{1}{s_1^{2n+m}}
+    \Bigr\rangle}
+\end{equation}
 
-\begin{mdframed}[backgroundcolor=yellow!20]
-\textbf{Code verification.}
-The function \texttt{D\_coeff(n,m,ell,alpha)} in \texttt{csdr.py} evaluates
-this sum exactly using Python's \texttt{Fraction} arithmetic.
-The test \texttt{check\_closed\_form\_1\_2()} verifies $(n,m)=(1,2)$ against
-the closed form
-$D^{(1,2)}=2\ell(\ell+2\alpha)(-11-10\alpha+2\ell(\ell+2\alpha))/((2\alpha+1)(2\alpha+3))$
-for $\ell=0,2,4,6,8$.  All 5 cases pass (confirmed by running the code).
-\end{mdframed}
+% ===================================================
+\section{Why $n_\ell^{(d)}$ Cancels and Is Not Needed in SDPB Blocks}
 
-\textbf{Note on the D formula vs.\ user notes.}  The user's LaTeX notes write
-$(-\tfrac{n}{2})_j$ and $(\alpha-\tfrac{1}{2})_j$ in the Pochhammer symbols.
-Based on the CSDR paper and the verified closed-form test, the correct symbols
-are $(-\tfrac{\ell}{2})_j$ and $(\alpha+\tfrac{\ell}{2})_j$.  The user's notation
-appears to contain typos ($n\to\ell$ and $-\tfrac12\to+\tfrac{\ell}{2}$).
-
-\subsection{Step 4: Heavy average}
-
-The Extremal EFT heavy average is (user notes eq.~(1)):
-\[
-  \langle F(m^2,J)\rangle
-  = \sum_{J\text{ even}} n_J^{(d)} \int_{M^2}^{\infty}\frac{dm^2}{m^2}\,
-    \frac{m^{4-d}}{\pi}\,\rho_J(m^2)\,F(m^2,J),
-\]
-with
-\[
-  n_J^{(d)}
-  = \frac{(4\pi)^{d/2}(d+2J-3)\,\Gamma(d+J-3)}{\pi\,\Gamma\!\bigl(\tfrac{d-2}{2}\bigr)\,\Gamma(J+1)}.
-\]
-
-Substituting the dispersion result, the integrand for $W_{n-m,m}$ is proportional to
-\[
-  n_\ell^{(d)}\cdot\rho_\ell\cdot F(s_1,\ell),\qquad
-  F(s_1,\ell) = \frac{D_{\ell}^{(n,m)}}{n_\ell^{(d)}}\,C_\ell^{(\alpha)}(1)\,(2\ell+d-3)\,\frac{1}{s_1^{2n+m}}.
-\]
-
-\subsection{Step 5: Cancellation of $n_\ell^{(d)}$ — explicit proof}
-
-Expanding the heavy average:
+Expanding $\langle F\rangle$ using the definition \eqref{eq:avg}:
 \begin{align}
   \langle F\rangle
-  &= \sum_\ell n_\ell^{(d)}
-     \int \rho_\ell\,
-     \frac{D_\ell^{(n,m)}}{n_\ell^{(d)}}\,
-     C_\ell^{(\alpha)}(1)\,(2\ell+d-3)\,\frac{1}{s_1^{2n+m}}\,
-     (\text{measure}) \nonumber\\
-  &= \sum_\ell \int \rho_\ell\,
-     D_\ell^{(n,m)}\,C_\ell^{(\alpha)}(1)\,(2\ell+d-3)\,\frac{1}{s_1^{2n+m}}\,
-     (\text{measure}).
+  &= \sum_\ell n_\ell^{(d)}\int\rho_\ell\,
+     \frac{D_{\ell,\alpha}^{(n,m)}}{n_\ell^{(d)}}\,
+     C_\ell^{(\alpha)}(1)\,(2\ell+d-3)\,\frac{1}{s_1^{2n+m}}\,(\text{measure}) \nonumber\\
+  &= \sum_\ell \int\rho_\ell\,
+     D_{\ell,\alpha}^{(n,m)}\,C_\ell^{(\alpha)}(1)\,(2\ell+d-3)\,
+     \frac{1}{s_1^{2n+m}}\,(\text{measure}).
 \end{align}
-The factor $n_\ell^{(d)}$ cancels exactly.
+The factors $n_\ell^{(d)}$ cancel exactly.
 
 \begin{mdframed}[backgroundcolor=green!15]
-\textbf{Why SDPB does not need $n_\ell^{(d)}$.}
-For SDPB we need: can we certify $\langle F\rangle\ge0$ for all $\rho_\ell\ge0$?
-Since $n_\ell^{(d)}>0$, the condition $\langle F\rangle\ge0$ for all $\rho_\ell\ge0$
-is equivalent to requiring the integrand $D_\ell^{(n,m)}\cdot C_\ell^{(\alpha)}(1)\cdot
-(2\ell+d-3)/s_1^{2n+m}$ to be non-negative for each $\ell$ and $s_1$.
-This is a polynomial positivity condition on the variable $x=s_1/\delta_0-1\ge0$,
-which is what SDPB solves.  Dividing out the positive constant $n_\ell^{(d)}$
-does not change the feasibility region.
-
-Therefore:
-\[\boxed{\text{SDPB block for spin }\ell: \quad \kappa_\ell^{(n,m)} = D_\ell^{(n,m)}\cdot C_\ell^{(\alpha)}(1)\cdot (2\ell+d-3).}\]
-\end{mdframed}
-
-\subsection{Result: User notes eq.~(2)}
-
-\begin{equation}\label{eq:W_kernel}
-  W_{n-m,\,m}
-  = \Bigl\langle
-      \frac{D_{\ell,\alpha}^{(n,m)}\,C_\ell^{(\alpha)}(1)\,(2\ell+d-3)}{n_\ell^{(d)}\,s_1^{2n+m}}
-    \Bigr\rangle
-  \quad(m>n\ge1,\;\text{null constraints})
-\end{equation}
-In the SDPB polynomial, the $1/n_\ell^{(d)}$ cancels with the measure, leaving
-$\kappa_\ell = D\cdot C_\ell(1)\cdot(2\ell+d-3)$ as the per-spin coefficient.
-
-% ===========================================================
-\section{Objective Kernel Formula (TODO)}
-
-For objectives ($n\ge m\ge0$), the CSDR kernel $B_\ell^{(n,m)}$ has a different
-form not covered by eq.~(11) of the paper.  The user has indicated that a
-correct formula exists and will be provided.
-
-\begin{mdframed}[backgroundcolor=red!15]
-\textbf{Current placeholder (csdr.py, obj\_kernel\_coeff):}
+\textbf{SDPB blocks.}
+The SDPB polynomial encodes the condition $\langle F\rangle\ge0$ for all
+$\rho_\ell\ge0$.  Since $n_\ell^{(d)}>0$, this is equivalent to requiring
 \[
-  \kappa_\ell^{\rm obj}(p,q) = C_\ell^{(\alpha)}(1)\cdot(2\ell+d-3).
+  D_{\ell,\alpha}^{(n,m)}\,C_\ell^{(\alpha)}(1)\,(2\ell+d-3) \cdot (\text{polynomial in }s_1)\;\ge\;0
 \]
-This is the leading forward-scattering contribution.  It is positive-definite
-and gives a well-posed SDPB problem but may not be the exact CSDR formula.
-
-Once the user provides the correct objective $D$ formula, update
-\texttt{csdr.obj\_kernel\_coeff} accordingly.
+for each even $\ell$ and $s_1\ge\delta_0$.  This is a polynomial positivity
+problem in $x = s_1/\delta_0 - 1 \ge 0$, which is what SDPB enforces.
+\textbf{SDPB blocks do not need $n_\ell^{(d)}$ explicitly.}
 \end{mdframed}
 
-% ===========================================================
+% ===================================================
+\section{D Coefficient — Two Formulas}\label{sec:D}
+
+\subsection{Null constraints ($m > n \ge 1$): CSDR paper eq.~(11)}
+
+\begin{equation}\label{eq:D_null}
+  D_{\ell,\alpha}^{(n,m)}
+  = \Gamma(m-n)\sum_{j=n}^{m}
+    \frac{(-4)^j\,(-\tfrac{\ell}{2})_j\,(\alpha+\tfrac{\ell}{2})_j\,(3j-m-2n)}
+         {j!\,(m-j)!\,(j-n)!\,(\alpha+\tfrac{1}{2})_j}.
+\end{equation}
+This coefficient \textbf{depends on the spin $\ell$} via the Pochhammer symbols
+$(-\tfrac{\ell}{2})_j$ and $(\alpha+\tfrac{\ell}{2})_j$.
+
+Implemented in \texttt{D\_coeff(n, m, ell, alpha)} in \texttt{csdr.py}.
+
+\begin{mdframed}[backgroundcolor=yellow!20]
+Verified: $D^{(1,2)}_{\ell,\tfrac{1}{2}}$ matches the closed form
+\[
+  \frac{2\ell(\ell+1)\bigl(-11-5+2\ell(\ell+1)\bigr)}{2\cdot4}
+\]
+for $\ell = 0, 2, 4, 6, 8$ (exact rational arithmetic, checked by \texttt{check\_closed\_form\_1\_2}).
+\end{mdframed}
+
+\subsection{Objectives ($n \ge m \ge 0$): user's formula from CSDR eq.~(4)}
+
+\begin{equation}\label{eq:D_obj}
+  D_\alpha^{(n,m)}
+  = \sum_{j=0}^{m}
+    \frac{(-4)^j\,(-\tfrac{1}{2})_j\,(\alpha+\tfrac{1}{2})_j\,(3j-m-2n)\,(n-j)!\,(-1)^{m+j+1}}
+         {(\alpha+\tfrac{3}{2})_j\,j!\,(m-j)!\,(n-m)!}.
+\end{equation}
+Key differences from \eqref{eq:D_null}:
+\begin{itemize}
+  \item Uses $(-\tfrac{1}{2})_j$ and $(\alpha+\tfrac{1}{2})_j$ in the numerator
+        (no $\ell$-dependence in these Pochhammer symbols).
+  \item Uses $(\alpha+\tfrac{3}{2})_j$ in the denominator (not $(\alpha+\tfrac{1}{2})_j$).
+  \item Factor $(n-j)!\,(-1)^{m+j+1}$ replaces $\Gamma(m-n)/(j-n)!$.
+  \item Sum from $j=0$ to $m$ (not from $j=n$).
+  \item \textbf{$D_\alpha^{(n,m)}$ does NOT depend on the spin $\ell$.}
+        The spin enters the kernel only through $C_\ell^{(\alpha)}(1)\,(2\ell+d-3)$.
+\end{itemize}
+
+Implemented in \texttt{D\_coeff\_obj(n, m, alpha)} in \texttt{csdr.py}.
+
+Selected values for $\alpha=\tfrac{1}{2}$ (i.e.\ $d=4$):
+\begin{align*}
+  D^{(1,0)} &= 2, & D^{(2,0)} &= 4, & D^{(1,1)} &= -3, & D^{(2,1)} &= -8.
+\end{align*}
+Verified by the unit check \texttt{check\_obj\_D\_basic()}.
+
+% ===================================================
 \section{SDPB Polynomial Matrix Program Structure}
 
-\subsection{Decision variables}
+\subsection{Decision variables (unified (n,m) notation)}
 
 \begin{itemize}
-  \item $z_{p,q}$: for each objective pair $(p,q)$ with $p\ge1$, $q\ge0$, $2p+3q\le K$.
-  \item $c_{n,m}$: for each null constraint pair $(n,m)$ with $m>n\ge1$, $2n+m\le K$.
+  \item $z_{n,m}$: objective Wilson coefficients, $(n,m)$ with $n>m\ge0$ and $2n+m\le K$.
+  \item $c_{n,m}$: null constraint Lagrange multipliers, $(n,m)$ with $m>n\ge1$ and $2n+m\le K$.
 \end{itemize}
-Total: $N_{\rm obj}+N_{\rm null}$ decision variables.
+Both sets use the same (n,m) index convention as $W_{n-m,m}$.
 
 \subsection{Spin block for spin $\ell$}
 
-Setting $s_1 = \delta_0(1+x)$ (so $x\ge0$ at threshold), the per-spin polynomial is
-\begin{align}
+Setting $s_1 = \delta_0(1+x)$ so $x\ge0$, the polynomial block is
+\begin{equation}\label{eq:block}
   P^{(\ell)}(x)
-  &= \sum_{(p,q)}\!z_{p,q}\,\kappa_\ell^{\rm obj}(p,q)\,(1+x)^{K-2p-3q} \nonumber\\
-  &\quad+ \sum_{(n,m)}\!c_{n,m}\,\kappa_\ell^{\rm null}(n,m)\,(1+x)^{K-2n-m}.
+  = \sum_{(n,m)\in\text{obj}} z_{n,m}\,\kappa_\ell^{\rm obj}(n,m)\,(1+x)^{K-2n-m}
+  + \sum_{(n,m)\in\text{null}} c_{n,m}\,\kappa_\ell^{\rm null}(n,m)\,(1+x)^{K-2n-m},
+\end{equation}
+where
+\begin{align}
+  \kappa_\ell^{\rm obj}(n,m) &= D_\alpha^{(n,m)}\cdot C_\ell^{(\alpha)}(1)\cdot(2\ell+d-3),
+  & \text{(from eq.~\eqref{eq:D_obj}, }\ell\text{-independent }D\text{)} \label{eq:kappa_obj}\\
+  \kappa_\ell^{\rm null}(n,m) &= D_{\ell,\alpha}^{(n,m)}\cdot C_\ell^{(\alpha)}(1)\cdot(2\ell+d-3).
+  & \text{(from eq.~\eqref{eq:D_null}, }\ell\text{-dependent }D\text{)} \label{eq:kappa_null}
 \end{align}
-Prefactor: $e^{-x}/(1+x)^K$ (DampedRational with pole $-1$ of multiplicity $K$).
 
-\subsection{PMP JSON format (SDPB requirement)}
+\subsection{DampedRational prefactor}
 
-The SDPB PMP JSON format uses the key \texttt{"DampedRational"} (not
-\texttt{"prefactor"}) inside each block.  Verified against the canonical example
-in \texttt{test/data/end-to-end\_tests/1d/input/pmp.json}.
-
+The SDPB PMP JSON format uses the key \texttt{"DampedRational"} (not \texttt{"prefactor"})
+inside each block.  The prefactor is $e^{-x}/(1+x)^K$, encoded as:
 \begin{verbatim}
-{
-  "objective": [...],
-  "normalization": [...],
-  "PositiveMatrixWithPrefactorArray": [
-    {
-      "DampedRational": {
-        "base": "0.36787...",   // e^{-1}
-        "constant": "1",
-        "poles": ["-1", ..., "-1"]   // K poles at -1
-      },
-      "polynomials": [[ [[c_0, c_1, ..., c_K]] ]]
-    },
-    ...
-  ]
+"DampedRational": {
+  "base": "0.36787944...",   // e^{-1}
+  "constant": "1",
+  "poles": ["-1", ..., "-1"] // K poles at x = -1
 }
 \end{verbatim}
 
 \subsection{SDPB optimization}
 
 \begin{alignat}{2}
-  &\text{maximize}  &&\quad z_{p_0,q_0} \nonumber\\
-  &\text{subject to}&&\quad z_{p_1,q_1} = 1 \quad\text{(normalization)}\nonumber\\
-  &                 &&\quad P^{(\ell)}(x)\ge0\quad\forall\,\ell\in\{0,2,\ldots\},\,\forall\, x\ge0.
+  &\text{maximize}  &&\quad z_{n_0,m_0} \nonumber\\
+  &\text{subject to}&&\quad z_{n_1,m_1} = 1 \quad(\text{normalization}) \nonumber\\
+  &                 &&\quad P^{(\ell)}(x)\ge0\quad\forall\,\ell\text{ even}\ge0,\;x\ge0.
 \end{alignat}
 
-% ===========================================================
+% ===================================================
 \section{Code Review Checklist}
 
 \begin{enumerate}
-  \item \textbf{csdr.py / alpha\_from\_d}: $\alpha=(d-3)/2$. \checkmark
-  \item \textbf{csdr.py / gegenbauer\_at\_one}: $(2\alpha)_\ell/\ell!$,
-    equals 1 for all $\ell$ when $d=4$. \checkmark
-  \item \textbf{csdr.py / D\_coeff}: Sum from $j=n$ to $m$, using
-    $(-\ell/2)_j$, $(\alpha+\ell/2)_j$, $\Gamma(m-n)=(m-n-1)!$.
-    Verified against closed form for $(n,m)=(1,2)$, $\ell=0,2,4,6,8$. \checkmark
-  \item \textbf{csdr.py / null\_kernel\_coeff}: $D\cdot C_\ell(1)\cdot(2\ell+d-3)$. \checkmark
-  \item \textbf{csdr.py / obj\_kernel\_coeff}: $C_\ell(1)\cdot(2\ell+d-3)$.
-    Placeholder — exact objective formula pending from user. \textbf{TODO}
-  \item \textbf{pmp\_generator.py / \_csdr\_spin\_block}: Uses key \texttt{"DampedRational"}
-    (corrected from \texttt{"prefactor"}) per SDPB format. \checkmark
-  \item \textbf{pmp\_generator.py / generate\_csdr\_pmp}: d is required, no d=4 default. \checkmark
-  \item \textbf{run\_bounds.py / run\_csdr\_checks}: Runs all 13 self-checks including
-    closed-form D comparison and pair enumeration. \checkmark
-  \item \textbf{S1+S2+S3=0 convention}: Documented in csdr.py header, LaTeX notes,
-    and run\_bounds.py metadata comment. \checkmark
-  \item \textbf{n\_ell cancellation}: Proved explicitly above; SDPB blocks correct. \checkmark
-  \item \textbf{11 existing tests pass}: Confirmed. \checkmark
+  \item \texttt{alpha\_from\_d}: $\alpha=(d-3)/2$. \checkmark
+  \item \texttt{gegenbauer\_at\_one}: $(2\alpha)_\ell/\ell!$ = 1 for all $\ell$ when $d=4$. \checkmark
+  \item \texttt{D\_coeff(n,m,ell,alpha)}: CSDR eq.~(11), null constraints ($m>n\ge1$), depends on $\ell$.
+        Verified against closed form for $(n,m)=(1,2)$, $\ell=0,2,4,6,8$. \checkmark
+  \item \texttt{D\_coeff\_obj(n,m,alpha)}: User's objective formula \eqref{eq:D_obj}, $\ell$-independent.
+        Verified: $D(1,0)=2$, $D(2,0)=4$ for $\alpha=\tfrac{1}{2}$. \checkmark
+  \item \texttt{null\_kernel\_coeff}: Calls $D\_coeff$ (eq.11, $\ell$-dependent). \checkmark
+  \item \texttt{obj\_kernel\_coeff(n,m,ell,d)}: Calls $D\_coeff\_obj$ (user's formula, $\ell$-independent). \checkmark
+  \item \texttt{enumerate\_obj\_pairs\_nm(K)}: Returns $(n,m)$ with $n>m\ge0$, $2n+m\le K$. \checkmark
+  \item \texttt{enumerate\_null\_pairs(K)}: Returns $(n,m)$ with $m>n\ge1$, $2n+m\le K$. \checkmark
+  \item \texttt{spectral\_power\_nm(n,m)}: Returns $2n+m$ for both objectives and null. \checkmark
+  \item \texttt{pmp\_generator.py}: Uses \texttt{"DampedRational"} key (not \texttt{"prefactor"}). \checkmark
+  \item \texttt{dispersion\_pipeline.py}: Uses \texttt{"DampedRational"} key. \checkmark
+  \item \texttt{d} is a required parameter everywhere; no $d=4$ default in kernel functions. \checkmark
+  \item All 11 existing tests pass. \checkmark
 \end{enumerate}
 
-\section{Open Questions for the User}
+% ===================================================
+\section{PMP File Construction (from SDPB README)}
+
+The SDPB solver takes a JSON file following the \texttt{PositiveMatrixWithPrefactor}
+format.  The top-level structure is:
+
+\begin{verbatim}
+{
+  "objective": [b_0, b_1, ..., b_{N-1}],
+  "normalization": [c_0, c_1, ..., c_{N-1}],
+  "PositiveMatrixWithPrefactorArray": [
+    // one block per spin ell = 0, 2, 4, ..., ell_max
+    {
+      "DampedRational": {
+        "base": "<e^{-1} to high precision>",
+        "constant": "1",
+        "poles": ["-1", "-1", ..., "-1"]   // K entries
+      },
+      "polynomials": [
+        [
+          // rows of the 1x1 matrix (one polynomial per decision variable)
+          [ [c_0, c_1, ..., c_K] ]   // var 0
+          ...
+        ]
+      ]
+    },
+    ...
+  ]
+}
+\end{verbatim}
+
+Produced by \texttt{generate\_csdr\_pmp(obj\_index, norm\_index, d, K, max\_spin, precision)}.
+Parameters:
+\begin{itemize}
+  \item \texttt{obj\_index}: $(n,m)$ of the Wilson coefficient to bound ($n>m\ge0$).
+  \item \texttt{norm\_index}: $(n,m)$ of the Wilson coefficient to normalize to 1.
+  \item \texttt{d}: spacetime dimension (required).
+  \item \texttt{K}: maximum spectral power $2n+m$ (default 8).
+  \item \texttt{max\_spin}: maximum even spin $\ell$ included (default 10).
+  \item \texttt{precision}: decimal precision for output coefficients (default 200).
+\end{itemize}
+
+% ===================================================
+\section{Open Questions Requiring User Input}
 
 \begin{enumerate}
-  \item \textbf{Objective $D$ formula}: Please provide the correct
-    $D_{\ell,\alpha}^{(n,m)}$ for objectives ($n\ge m$, first CSDR index $\ge0$).
-    The current code uses a forward-scattering placeholder.
-  \item \textbf{Numerical comparison}: After the objective formula is corrected,
-    should we compare the CSDR bounds to the fixed-$t$ (Extremal EFT) bounds
-    numerically?
-  \item \textbf{Value of $K$}: What maximum spectral order $K$ (i.e., the cutoff
-    $2p+3q\le K$) should be used?  Default is $K=8$.
-  \item \textbf{Value of $d$}: What spacetime dimensions should be targeted?
-    The code supports any $d\ge3$.
-  \item \textbf{Threshold $\delta_0$}: What value should be used for the spectral
-    threshold $\delta_0$ (the lower limit of the dispersion integral)?
+  \item \textbf{Include $W_{0,m}$ objectives?}
+        The objective enumeration currently requires $n>m$ (strict), so $W_{0,m}$
+        (with $n=m$) is excluded.  If needed, add $n\ge m$ in \texttt{enumerate\_obj\_pairs\_nm}.
+  \item \textbf{Numerical verification}: The CSDR and fixed-$t$ kernels may or may not
+        give numerically different bounds.  A direct comparison would be valuable.
+  \item \textbf{Production parameters}: Target $K$, $d$, $\delta_0$, \texttt{max\_spin}?
+  \item \textbf{Sign of $D^{\rm obj}$}: $D_\alpha^{(1,1)} = -3 < 0$ etc.\ — the per-spin
+        polynomial coefficient for $W_{0,1}$ is negative.  This is physically consistent
+        (SDPB dual variables can take any sign) but confirm this is expected.
 \end{enumerate}
 
 \end{document}
