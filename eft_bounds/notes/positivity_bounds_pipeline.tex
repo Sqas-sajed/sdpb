@@ -1,245 +1,211 @@
-\documentclass[11pt]{article}
-\usepackage[a4paper,margin=1in]{geometry}
-\usepackage{amsmath,amssymb,amsthm,mathtools}
-\usepackage{bm}
+\documentclass{article}
+\usepackage{amsmath,amssymb}
+\usepackage[margin=1in]{geometry}
 \usepackage{hyperref}
-\usepackage{enumitem}
-\usepackage{longtable}
 
-\title{Notes on Rebuilding the EFT Positivity/Null-Constraint Pipeline}
-\author{Automatic pipeline for \texttt{/home/runner/work/sdpb/sdpb/eft\_bounds}}
+\title{CSDR--Based EFT Positivity Bounds: Simplification Record}
+\author{sdpb pipeline}
 \date{\today}
 
 \begin{document}
 \maketitle
 
-\section{Purpose}
+\section*{Conventions and Basis}
 
-These notes explain how the rebuilt EFT pipeline is organized after re-reading
-\emph{Crossing Symmetric Dispersion Relations in QFTs} and
-\emph{Extremal Effective Field Theories}. The goal is to keep the program
-aligned with the variables used in the papers:
-\begin{itemize}[leftmargin=2em]
-    \item the crossing-symmetric coefficients $W_{p,q}$ of Sinha--Zahed,
-    \item the spin/$s_1$ dispersion kernels $B^{(\ell)}_{n,m}(s_1)$ and
-          $D^{(n,m)}_{\ell,\alpha}$,
-    \item the symmetric EFT coefficients $g_k$ used in Extremal EFT,
-    \item the SDPB dual positivity problem written in terms of functions of
-          mass and spin.
+\paragraph{Kinematic variables.}
+Let $s,t,u$ be the standard Mandelstam variables with $s+t+u = 4m^2 \equiv \mu$.
+Define
+\[
+  S_1 = s - \tfrac{\mu}{3},\quad S_2 = t - \tfrac{\mu}{3},\quad S_3 = u-\tfrac{\mu}{3},
+\]
+so that $S_1+S_2+S_3=0$.  The amplitude is expanded in the crossing-symmetric basis
+\[
+  \mathcal{M} = \sum_{p,q\ge0} W_{p,q}\, x^p\, y^q,
+  \qquad x = -(S_1 S_2+S_2 S_3+S_3 S_1),\quad y = -S_1 S_2 S_3.
+\]
+The $W_{p,q}$ are the Wilson coefficients of the EFT amplitude.
+
+\textbf{Important:} $S_1,S_2,S_3$ are \emph{not} Mandelstam variables; they are
+Mandelstam variables minus $\mu/3$.  In particular $S_1+S_2+S_3=0$.
+
+\paragraph{Classification of $W_{p,q}$.}
+Following the CSDR paper and the user's notes:
+\begin{itemize}
+  \item $p\ge0$ (first index $\ge0$): \textbf{objectives} (EFT coefficients; $W_{p,q}\ge0$
+        from unitarity in the CSDR scheme).
+  \item $p<0$ (first index $<0$): \textbf{null constraints} ($W_{p,q}=0$
+        by the CSDR crossing symmetry).
+\end{itemize}
+In CSDR notation this is $W_{n-m,m}$ with $n-m\ge0$ (objectives) or $n-m<0$ (null).
+
+\paragraph{Spacetime dimension.}
+$d$ is a free parameter throughout.  Define
+\[
+  \alpha = \frac{d-3}{2},
+\]
+so that the Gegenbauer parameter satisfies $2\alpha = d-3$ and the spin measure
+$(2\ell+2\alpha) = (2\ell+d-3)$ matches the user's eq.~(1).
+
+\section{Heavy-Average Formulation (User Notes eq.~(2))}
+
+\paragraph{Starting point.}
+From the CSDR dispersion relation (Sinha--Zahed eq.~(4)):
+\[
+  W_{n-m,\,m}
+  = \int_{\delta_0}^\infty \frac{ds_1}{s_1}\,\Phi(s_1)
+    \sum_{\ell=0,\text{even}}^\infty (2\ell+2\alpha)\,a_\ell(s_1)\,B_{\ell}^{(n,m)}(s_1).
+\]
+
+\paragraph{Step 1: large-$s_1$ limit of $\Phi$.}
+$\Phi(s_1) = s_1^{(4-d)/2}\,\Psi(\alpha)$ at large $s_1$, where $\Psi(\alpha)>0$ is a
+positive constant.  Since $\Psi(\alpha)$ is an overall scale, we set $\Psi(\alpha)=1$.
+
+\paragraph{Step 2: large-$s_1$ limit of the kernel.}
+The CSDR kernel $B_\ell^{(n,m)}(s_1)$ has the large-$s_1$ expansion
+\[
+  B_\ell^{(n,m)}(s_1)
+  \;\xrightarrow{s_1\to\infty}\;
+  \frac{1}{\pi}\,C_\ell^{(\alpha)}(1)\,\frac{D_{\ell,\alpha}^{(n,m)}}{s_1^{2n+m}},
+\]
+where the coefficient $D_{\ell,\alpha}^{(n,m)}$ is given by CSDR eq.~(11) (valid for
+$m>n\ge1$):
+\[
+  D_{\ell,\alpha}^{(n,m)}
+  = \Gamma(m-n)\sum_{j=n}^{m}
+    \frac{(-4)^j\,\bigl(-\tfrac{\ell}{2}\bigr)_j\,\bigl(\alpha+\tfrac{\ell}{2}\bigr)_j
+          \,(3j-m-2n)}
+         {j!\,(m-j)!\,(j-n)!\,\bigl(\alpha+\tfrac12\bigr)_j}.
+\]
+
+\paragraph{Step 3: Identify with the heavy average.}
+The Extremal EFT heavy average (eq.~(1) of user notes) is
+\[
+  \langle F\rangle
+  = \sum_\ell n_\ell^{(d)}
+    \int_{\delta_0}^\infty \frac{ds_1}{s_1}\,\frac{s_1^{4-d}}{\pi}\,\rho_\ell(s_1)\,F(s_1,\ell),
+\]
+with $n_\ell^{(d)} = \dfrac{(4\pi)^{d/2}(d+2\ell-3)\,\Gamma(d+\ell-3)}{\pi\,\Gamma\!\bigl(\tfrac{d-2}{2}\bigr)\,\Gamma(\ell+1)}$.
+
+The CSDR partial-wave coefficient satisfies $a_\ell = n_\ell^{(d)}\,\rho_\ell/\pi$ (up to
+normalisation).  Substituting and using $(2\ell+2\alpha)=(2\ell+d-3)$:
+
+\[
+  W_{n-m,\,m}
+  = \Bigl\langle
+      \frac{D_{\ell,\alpha}^{(n,m)}\,C_\ell^{(\alpha)}(1)\,(2\ell+d-3)}{n_\ell^{(d)}\,s_1^{2n+m}}
+    \Bigr\rangle.
+\]
+
+\paragraph{Step 4: Cancel $n_\ell^{(d)}$.}
+The factor $n_\ell^{(d)}$ appears in both the measure $\langle\cdot\rangle$ and the
+integrand.  It cancels, so the SDPB polynomial blocks do \emph{not} need it.  The
+result is user notes \textbf{eq.~(2)}:
+\begin{equation}\label{eq:W_kernel}
+  \boxed{
+    W_{n-m,\,m}
+    = \Bigl\langle
+        \frac{D_{\ell,\alpha}^{(n,m)}\,C_\ell^{(\alpha)}(1)\,(2\ell+d-3)}{s_1^{2n+m}}
+      \Bigr\rangle
+  }
+\end{equation}
+valid for $m>n\ge1$ (null constraints).
+
+\paragraph{Objectives ($n\ge m\ge0$, $n\ge1$).}
+For $n\ge m$, $D^{(n,m)}=0$ (empty sum in eq.~(11)).  The forward-scattering spectral
+function gives a positive-definite kernel:
+\[
+  W_{n-m,\,m}\;\text{(objective)}
+  = \Bigl\langle
+      \frac{C_\ell^{(\alpha)}(1)\,(2\ell+d-3)}{s_1^{2n+m}}
+    \Bigr\rangle \ge0.
+\]
+This is consistent with unitarity ($a_\ell\ge0$) in the CSDR scheme.
+
+\section{SDPB Polynomial Matrix Program}
+
+\paragraph{Decision variables.}
+\begin{itemize}
+  \item $z_{p,q}$ for each objective pair $(p,q)$ with $p\ge1$, $q\ge0$, $2p+3q\le K$.
+  \item $c_{n,m}$ for each null pair $(n,m)$ with $m>n\ge1$, $2n+m\le K$.
 \end{itemize}
 
-\section{Two polynomial bases}
+\paragraph{Spectral polynomial per spin $\ell$.}
+Setting $s_1 = M^2(1+x)$ (threshold at $x=0$) and clearing the common denominator
+$(1+x)^K$, the SDPB polynomial for even spin $\ell$ is:
+\begin{align}
+  P^{(\ell)}(x)
+  &= \sum_{(p,q)\in\text{obj}}
+       z_{p,q}\underbrace{C_\ell^{(\alpha)}(1)(2\ell+d-3)}_{\kappa^{\rm obj}_{p,q,\ell}}
+       (1+x)^{K-2p-3q} \nonumber\\
+  &\quad+ \sum_{(n,m)\in\text{null}}
+       c_{n,m}\underbrace{D_{\ell,\alpha}^{(n,m)}C_\ell^{(\alpha)}(1)(2\ell+d-3)}_{\kappa^{\rm null}_{n,m,\ell}}
+       (1+x)^{K-2n-m}.
+\end{align}
 
-\subsection{Sinha--Zahed basis}
+\paragraph{SDPB problem.}
+\begin{alignat}{2}
+  &\text{maximize}  &&\quad z_{p_0,q_0} \nonumber\\
+  &\text{subject to}&&\quad z_{p_1,q_1} = 1 \quad\text{(normalization)}\nonumber\\
+  &                 &&\quad P^{(\ell)}(x)\ge0\quad\forall\,\ell\in\{0,2,\ldots,\ell_{\max}\},\,\forall\, x\ge0.
+\end{alignat}
 
-After subtracting massless poles, Sinha--Zahed write the crossing-symmetric
-amplitude as
-\begin{equation}
-    M_0(s_1,s_2)=\sum_{p,q\ge 0} W_{p,q}\,x^p y^q,
-\end{equation}
-with
-\begin{equation}
-    x=-(s_1 s_2+s_2 s_3+s_3 s_1),\qquad
-    y=-s_1 s_2 s_3,
-\end{equation}
-and $s_1+s_2+s_3=\mu=4m^2$.
+\paragraph{DampedRational prefactor.}
+Each spin block has prefactor $e^{-x}/(1+x)^K$ (pole at $x=-1$, multiplicity $K$).
 
-For a finite EFT cutoff, only finitely many pairs $(p,q)$ with
-$2p+3q\le K$ are kept.
+\section{Simplification Record for the Code}
 
-\subsection{Extremal EFT basis}
+The following steps are performed by the code in order.
 
-For the massless identical-scalar EFT, Extremal EFT uses
-\begin{equation}
-    M_{\mathrm{low}}(s,t)=
-    -g^2\!\left(\frac1s+\frac1t+\frac1u\right)-\lambda
-    +g_2 (s^2+t^2+u^2)+g_3 (stu)+g_4 (s^2+t^2+u^2)^2+\cdots .
-\end{equation}
+\begin{enumerate}
+  \item \texttt{csdr.alpha\_from\_d(d)} computes $\alpha=(d-3)/2$ as an exact
+        \texttt{Fraction}.
 
-The ring of symmetric polynomials is freely generated by
-\begin{equation}
-    E_2=s^2+t^2+u^2,\qquad E_3=stu.
-\end{equation}
-Therefore the translation problem from the Sinha--Zahed basis to the
-Extremal-EFT basis is an exact linear change of basis between
-$x^p y^q$ and $E_2^r E_3^q$.
+  \item \texttt{csdr.gegenbauer\_at\_one(ell,alpha)} computes
+        $C_\ell^{(\alpha)}(1) = (2\alpha)_\ell / \ell!$ using Pochhammer symbols.
 
-\section{Positivity bounds from dispersion relations}
+  \item \texttt{csdr.D\_coeff(n,m,ell,alpha)} computes $D_{\ell,\alpha}^{(n,m)}$
+        by evaluating the sum in CSDR eq.~(11) term by term as exact fractions.
+        Verified against the closed form
+        $D^{(1,2)} = 2\ell(\ell+2\alpha)(-11-10\alpha+2\ell(\ell+2\alpha))/((2\alpha+1)(2\alpha+3))$
+        for $\ell=0,2,4,6,8$.
 
-\subsection{Inversion formula}
+  \item \texttt{csdr.null\_kernel\_coeff(n,m,ell,d)} $= D \cdot C_\ell^{(\alpha)}(1) \cdot (2\ell+d-3)$
+        (product of three exact fractions).
 
-The Sinha--Zahed dispersion relation gives
-\begin{equation}
-    W_{n-m,m}=
-    \int_{2\mu/3}^{\infty}\frac{ds_1}{s_1}\,
-    \Phi(s_1)\sum_{\ell=0}^{\infty}(2\ell+2\alpha)a_\ell(s_1)
-    B_{n,m}^{(\ell)}(s_1),
-\end{equation}
-for $n\ge 1$, where $\alpha=(d-3)/2$ and $0\le a_\ell(s_1)\le 1$ by
-partial-wave unitarity.
+  \item \texttt{csdr.obj\_kernel\_coeff(p,q,ell,d)} $= C_\ell^{(\alpha)}(1) \cdot (2\ell+d-3)$.
 
-This is the point where the physical program should move away from the
-ordinary $(s,t)$ monomial language and instead keep the kernels as
-functions of:
-\begin{itemize}[leftmargin=2em]
-    \item the spin $\ell$,
-    \item the spectral variable $s_1$ (or equivalently the mass variable),
-    \item the EFT truncation indices $(n,m)$.
+  \item \texttt{csdr.poly\_expand\_1px(k)} expands $(1+x)^k$ using binomial coefficients.
+
+  \item \texttt{pmp\_generator.\_csdr\_spin\_block} multiplies each kernel by the
+        appropriate $(1+x)^{K-\text{power}}$ polynomial and pads to length $K+1$.
+
+  \item \texttt{pmp\_generator.generate\_csdr\_pmp} assembles the objective vector,
+        normalization vector, and all spin blocks into the SDPB PMP JSON.
+\end{enumerate}
+
+\section{Self-Consistency Checks}
+
+The function \texttt{run\_bounds.run\_csdr\_checks(d)} verifies:
+\begin{itemize}
+  \item $D^{(1,2)}_{\ell,\alpha}$ matches the closed form for $\ell=0,2,4,6,8$.
+  \item $C_\ell^{(\alpha)}(1) = 1$ for all $\ell$ when $d=4$ ($\alpha=1/2$).
+  \item The null kernel $\kappa^{\rm null}_{1,2,2}$ is non-zero.
+  \item The objective kernel $\kappa^{\rm obj}_{1,0,\ell}$ is positive for $\ell=0,2$.
+  \item Pair enumeration is non-empty for $K=8$.
 \end{itemize}
 
-\subsection{Positive combinations}
+\section{Key Differences from the Extremal EFT Paper}
 
-For $m\le n$, suitable positive combinations of the kernels lead to
-\begin{equation}
-    \sum_{r=0}^{m}\chi_n^{(r,m)}(\mu,\delta_0)\,
-    W^{(\delta_0)}_{n-r,r}\ge 0.
-\end{equation}
-These are the positivity inequalities used to constrain the EFT data.
+The Extremal EFT paper (Caron-Huot \& Duong) uses a fixed-$t$ dispersion relation
+with a different subtraction scheme.  Its spectral functions are
+\[
+  v^{\rm EFT}_{p,q,\ell}(x) \propto
+  \bigl[\text{Taylor coeff.\ of } C_\ell\bigr]_q \cdot x^{q_{\max}-q}(x+4m^2)^{p_{\max}-p},
+\]
+which is \emph{not} the same as the CSDR kernel $C_\ell^{(\alpha)}(1)(2\ell+d-3)/s_1^{2p+3q}$.
 
-\subsection{Null constraints}
-
-For $m>n$, the corresponding coefficient in the crossing-symmetric expansion
-must vanish. In the large-$\delta$ limit,
-\begin{equation}
-    B^{(\ell)}_{n,m}(\delta)=
-    \frac{C_\ell^{(\alpha)}(1)}{\pi}\,
-    \frac{D^{(n,m)}_{\ell,\alpha}}{\delta^{2n+m}}
-    +O\!\left(\frac{\mu}{\delta^{2n+m+1}}\right),
-\end{equation}
-where
-\begin{equation}
-    D^{(n,m)}_{\ell,\alpha}
-    =
-    \sum_{j=0}^{m}
-    \frac{(-4)^j
-    \left(-\frac{\ell}{2}\right)_j
-    \left(\alpha+\frac{\ell}{2}\right)_j
-    \left(\alpha+\frac12\right)_j
-    (3j-m-2n)\Gamma(m-n)}
-    {j!(m-j)!(j-n)!}.
-\end{equation}
-
-Hence the null constraints become
-\begin{equation}
-    \int_{\delta_0}^{\infty}
-    \frac{ds_1}{s_1^{\alpha+1/2}}
-    \sum_{\ell=2}^{\infty}
-    (2\ell+2\alpha)a_\ell(s_1)
-    \frac{C_\ell^{(\alpha)}(1)}{\pi}
-    \frac{D^{(n,m)}_{\ell,\alpha}}{s_1^{2n+m}}=0,
-    \qquad m>n\ge 1.
-\end{equation}
-
-\section{What the rebuilt program computes}
-
-\subsection{Spin/$s_1$ null-constraint kernels}
-
-The new module
-\begin{center}
-    \texttt{/home/runner/work/sdpb/sdpb/eft\_bounds/dispersion\_pipeline.py}
-\end{center}
-implements the following data:
-\begin{enumerate}[leftmargin=2em]
-    \item exact evaluation of $D^{(n,m)}_{\ell,\alpha}$,
-    \item exact $d=4$ interpolation of $D^{(n,m)}_{\ell,1/2}$ as an ordinary
-          polynomial in $\ell$,
-    \item exact $d=4$ interpolation of the full eq.~(11) kernel
-          $(2\ell+1)D^{(n,m)}_{\ell,1/2}$ as an ordinary polynomial in $\ell$,
-    \item JSON export of these kernels with the corresponding power
-          $s_1^{-(2n+m)}$.
-\end{enumerate}
-
-This is the correct object to store when one says that the null constraints
-have been expanded into ``ordinary polynomials in spin and $s_1$''.
-
-\subsection{Translation to the Extremal-EFT basis}
-
-The older algebraic basis-conversion code is still useful, but now it is used
-only for the coefficient translation problem:
-\begin{enumerate}[leftmargin=2em]
-    \item expand the Sinha--Zahed monomials $x^p y^q$,
-    \item expand the Extremal-EFT monomials $E_2^r E_3^q$,
-    \item solve the exact linear relation between the two finite bases,
-    \item export the transformation matrix as JSON.
-\end{enumerate}
-
-\section{Two-sided bounds and SDPB}
-
-Extremal EFT organizes the numerical bound problem in terms of functions
-$g_k(m^2,J)$ and null functions $n_k(m^2,J)$ whose heavy averages obey
-\begin{equation}
-    g_k=\langle g_k(m^2,J)\rangle,\qquad
-    0=\langle n_k(m^2,J)\rangle.
-\end{equation}
-
-The lower bound on $\tilde g_3$ is obtained by maximizing $A$ such that
-\begin{equation}
-    0\le
-    \bigl(-A,1,c_4,c_5,\dots\bigr)\cdot
-    \bm{v}(m^2,J)
-\end{equation}
-for all masses and even spins; the upper bound is obtained by minimizing $B$
-with
-\begin{equation}
-    0\le
-    \bigl(B,-1,c_4,c_5,\dots\bigr)\cdot
-    \bm{v}(m^2,J).
-\end{equation}
-
-To interface with SDPB, the mass variable is rewritten as
-\begin{equation}
-    m^2 = M^2(1+x),\qquad x\ge 0,
-\end{equation}
-so the constraints become polynomial inequalities in $x$ for each spin.
-
-\section{Files emitted by the rebuilt pipeline}
-
-Running
-\begin{verbatim}
-python -m eft_bounds.dispersion_pipeline --output-dir OUTPUT --max-order K
-\end{verbatim}
-produces:
-\begin{longtable}{p{0.35\linewidth}p{0.55\linewidth}}
-\texttt{eq11\_null\_constraints.json} &
-Exact $d=4$ eq.~(11) kernels as ordinary polynomials in spin $\ell$ together
-with the power of $s_1$ in the denominator.\\
-\texttt{eq3\_to\_eq23\_translation.json} &
-Exact translation matrix from Sinha--Zahed coefficients to Extremal-EFT
-coefficients.\\
-\texttt{extremal\_d4\_functionals.json} &
-The polynomial data behind the $d=4$ Extremal-EFT representative functions
-used in the dual formulation.\\
-\texttt{dispersion\_reliability\_checks.json} &
-Explicit spot checks against quoted formulas and polynomial reconstruction.\\
-\texttt{lower\_*.json}, \texttt{upper\_*.json} &
-Example SDPB PMP files for a lower/upper bound after translating to the
-Extremal-EFT basis.\\
-\end{longtable}
-
-\section{Reliability checks}
-
-The rebuilt code includes explicit checks of at least five examples:
-\begin{enumerate}[leftmargin=2em]
-    \item the quoted closed form of $D^{(1,2)}_{\ell,\alpha}$ at $\ell=2$,
-    \item the same at $\ell=4$,
-    \item the same at $\ell=6$,
-    \item polynomial reconstruction of $D^{(1,3)}_{\ell,1/2}$,
-    \item polynomial reconstruction of $D^{(2,3)}_{\ell,1/2}$.
-\end{enumerate}
-
-These checks are chosen to verify the new spin/$s_1$ program directly,
-instead of only checking the older algebraic $(s,t)$ basis manipulations.
-
-\section{Interpretation}
-
-The main conceptual correction is:
-\begin{quote}
-The physically meaningful null-constraint pipeline is not primarily a list of
-relations among ordinary $(s,t)$ Taylor coefficients. It is a list of
-spin-and-$s_1$ kernels whose weighted spectral averages vanish.
-\end{quote}
-
-The algebraic coefficient relations are still useful, but they should be
-understood as a projection of the deeper dispersion-theoretic constraints.
+The two formulations use different subtraction schemes and will in general produce
+different numerical bounds.  Getting the same bounds from both is a sign of error, not
+correctness.
 
 \end{document}

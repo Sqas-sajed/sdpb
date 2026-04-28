@@ -1,236 +1,363 @@
 """
 pmp_generator.py — Generate PMP JSON input files for SDPB.
 
-This module translates the EFT dual optimization problem into SDPB's
+This module translates the EFT dual optimization problem — formulated using
+the CSDR (Crossing-Symmetric Dispersion Relations) scheme — into SDPB's
 Polynomial Matrix Program (PMP) JSON format.
 
-The PMP problem solved by SDPB is:
-  maximize  a · z  over  z ∈ R^{N+1}
-  such that Σ_n z_n W_j^n(x) ≽ 0  for all x ≥ 0, j=1,...,J
-  and       n · z = 1
+Physics setup (following user notes eq.(2))
+-------------------------------------------
+The heavy average of a kernel F(s1, ell) is:
 
-With normalization n = (1, 0, ..., 0), this reduces to:
-  maximize  b₀ + b · y  over  y ∈ R^N
-  such that M_j^0(x) + Σ_{n=1}^N y_n M_j^n(x) ≽ 0  for all x ≥ 0
+  <F> = sum_{ell even} n^{(d)}_ell int_{delta0}^inf ds1/s1 * s1^{4-d}/pi
+        * rho_ell(s1) * F(s1,ell)
 
-The physics mapping:
-  - y_n ↔ Wilson coefficients (after eliminating dependent ones via null constraints)
-  - j ↔ spin ℓ in the partial-wave expansion
-  - x ↔ μ - μ_threshold (shifted mass squared)
-  - M_j^n(x) ↔ spectral function v_ℓ^{(n)}(x)
+Wilson coefficients W_{p,q} (first index p = n-m, second q = m):
+
+  Objectives  (p >= 1, q >= 0): W_{p,q} = < C^alpha_ell(1)*(2ell+d-3)/s1^{2p+3q} >
+  Null constr (p = n-m < 0):    W_{p,q} = < D^{(n,m)}_ell*C^alpha_ell(1)*(2ell+d-3)/s1^{2n+m} > = 0
+
+  where alpha = (d-3)/2.
+
+SDPB PMP structure
+------------------
+Decision variables z = (z_{p,q} for obj, c_{n,m} for null constraints).
+
+For each even spin ell in {0,2,...,ell_max}, one 1×1 polynomial block:
+
+  P^{(ell)}(x) = sum_{obj}  z_{p,q}  * obj_kernel(p,q,ell) * (1+x)^{K-2p-3q}
+               + sum_{null} c_{n,m}  * null_kernel(n,m,ell) * (1+x)^{K-2n-m}
+
+  where K = max spectral power, and the DampedRational prefactor is e^{-x}/(1+x)^K.
+
+The SDPB problem maximizes b·z subject to c·z = 1 and P^{(ell)}(x) >= 0 for all x >= 0.
+
+Key properties:
+  * obj_kernel >= 0 for all ell, d => objectives always have positive kernels.
+  * null_kernel can be negative (D can be negative) => null constraints are
+    non-trivially enforced by the Lagrange multipliers c_{n,m}.
+  * Different from Extremal EFT (fixed-t dispersion) spectral functions.
+    The two subtraction schemes give different bounds.
+
+IMPORTANT: d is a free parameter. Do NOT hardcode d=4.
 """
 
 import json
-import math
-from collections import defaultdict
 from fractions import Fraction
 from typing import Any, Dict, List, Optional, Tuple
 
-from .physics import (
-    build_positivity_polynomials,
-    fraction_to_str,
-    gegenbauer_coefficients,
-    _taylor_coeff_at_one,
-    _binomial,
-    _expand_binomial_power,
-    _poly_multiply,
+from .csdr import (
+    alpha_from_d,
+    enumerate_null_pairs,
+    enumerate_obj_pairs,
+    null_kernel_coeff,
+    obj_kernel_coeff,
+    poly_expand_1px,
+    poly_pad,
+    poly_scale,
+    s1_power,
 )
-from .null_constraints import (
-    eliminate_variables,
-    get_null_constraints,
-    get_crossing_symmetric_null_constraints,
-)
+from .physics import fraction_to_str
+
+
+# ---------------------------------------------------------------------------
+# e^{-1} helper
+# ---------------------------------------------------------------------------
+
+def _compute_e_inverse(precision: int) -> str:
+    """Compute 1/e to precision decimal digits."""
+    from decimal import Decimal, getcontext
+    getcontext().prec = precision + 20
+    e_val = Decimal(1)
+    fac = Decimal(1)
+    for k in range(1, precision + 100):
+        fac *= k
+        term = Decimal(1) / fac
+        e_val += term
+        if term < Decimal(10) ** (-(precision + 10)):
+            break
+    return format(Decimal(1) / e_val, f".{precision}f").rstrip("0").rstrip(".")
+
+
+# ---------------------------------------------------------------------------
+# Single spin block
+# ---------------------------------------------------------------------------
+
+def _csdr_spin_block(
+    ell: int,
+    obj_pairs: List[Tuple[int, int]],
+    null_pairs: List[Tuple[int, int]],
+    K: int,
+    d: int,
+    precision: int,
+) -> Optional[Dict[str, Any]]:
+    """
+    Build one SDPB PositiveMatrixWithPrefactor block for spin ell.
+
+    Simplification record for this block
+    -------------------------------------
+    1. Compute alpha = (d-3)/2.
+    2. For each objective (p,q):
+         kappa = C^alpha_ell(1) * (2ell+d-3)      [obj_kernel_coeff from csdr.py]
+         poly  = kappa * (1+x)^{K-(2p+3q)}        [expand binomial, scale by kappa]
+    3. For each null constraint (n,m):
+         kappa = D^{(n,m)}_ell * C^alpha_ell(1) * (2ell+d-3)  [null_kernel_coeff from csdr.py]
+         poly  = kappa * (1+x)^{K-(2n+m)}
+    4. Prefactor: e^{-x} / (1+x)^K  (pole at x=-1, multiplicity K).
+    5. Assemble 1×1 polynomial block.
+    """
+    poly_vectors: List[List[Fraction]] = []
+
+    for (p, q) in obj_pairs:
+        kappa = obj_kernel_coeff(p, q, ell, d)
+        exp = K - s1_power(p, q)
+        poly = poly_pad(poly_scale(poly_expand_1px(exp), kappa), K + 1)
+        poly_vectors.append(poly)
+
+    for (n, m) in null_pairs:
+        kappa = null_kernel_coeff(n, m, ell, d)
+        exp = K - (2 * n + m)
+        poly = poly_pad(poly_scale(poly_expand_1px(exp), kappa), K + 1)
+        poly_vectors.append(poly)
+
+    if all(all(c == 0 for c in pv) for pv in poly_vectors):
+        return None
+
+    e_inv = _compute_e_inverse(precision)
+    prefactor = {
+        "base": e_inv,
+        "constant": "1",
+        "poles": ["-1"] * K,
+    }
+
+    poly_json = [[
+        [fraction_to_str(c, precision) for c in pv]
+        for pv in poly_vectors
+    ]]
+
+    return {
+        "prefactor": prefactor,
+        "polynomials": [poly_json],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Main PMP generators
+# ---------------------------------------------------------------------------
+
+def generate_csdr_pmp(
+    obj_index: Tuple[int, int],
+    norm_index: Tuple[int, int],
+    d: int,
+    K: int = 8,
+    max_spin: int = 10,
+    precision: int = 200,
+    bound_direction: str = "upper",
+) -> Dict[str, Any]:
+    """
+    Generate SDPB PMP JSON for bounding W_{obj_index} / W_{norm_index}
+    using CSDR dispersion relations (user notes eq.(2)).
+
+    This is the primary PMP generator.  It uses CSDR kernels, not the
+    Extremal EFT spectral functions.  Results will differ from the
+    Extremal EFT paper (different subtraction schemes).
+
+    Simplification record
+    ---------------------
+    1. Enumerate objective pairs (p>=1, q>=0, 2p+3q<=K) via csdr.enumerate_obj_pairs.
+    2. Enumerate null constraint pairs (m>n>=1, 2n+m<=K) via csdr.enumerate_null_pairs.
+    3. Build decision variable vector z = [z_{obj pairs...}, c_{null pairs...}].
+       - Positions 0..N_obj-1: objective Wilson coefficients.
+       - Positions N_obj..N_obj+N_null-1: null constraint Lagrange multipliers.
+    4. Objective vector b: b[i] = +1 (upper) or -1 (lower) at obj_index position.
+    5. Normalization vector c: c[i] = 1 at norm_index position.
+    6. For each even spin ell in {0,2,...,max_spin}: build spin block via _csdr_spin_block.
+    7. Output PMP JSON with metadata.
+
+    Parameters
+    ----------
+    obj_index : (p, q)      Wilson coefficient to bound.
+    norm_index : (p, q)     Wilson coefficient to normalize to 1.
+    d : int                 Spacetime dimension (required, no default).
+    K : int                 Maximum spectral power 2p+3q / 2n+m (default 8).
+    max_spin : int          Maximum even spin (default 10).
+    precision : int         Output decimal precision (default 200).
+    bound_direction : str   "upper" (maximize) or "lower" (minimize).
+
+    Returns
+    -------
+    dict  SDPB PMP JSON.
+    """
+    obj_pairs = enumerate_obj_pairs(K)
+    null_pairs = enumerate_null_pairs(K)
+
+    if obj_index not in obj_pairs:
+        raise ValueError(
+            f"obj_index {obj_index} not in objective pairs for K={K} "
+            f"(need p>=1, q>=0, 2p+3q<={K})."
+        )
+    if norm_index not in obj_pairs:
+        raise ValueError(
+            f"norm_index {norm_index} not in objective pairs for K={K} "
+            f"(need p>=1, q>=0, 2p+3q<={K})."
+        )
+
+    N_obj = len(obj_pairs)
+    N_null = len(null_pairs)
+    N = N_obj + N_null
+
+    # Objective vector
+    b: List[Fraction] = [Fraction(0)] * N
+    obj_pos = obj_pairs.index(obj_index)
+    b[obj_pos] = Fraction(1) if bound_direction == "upper" else Fraction(-1)
+
+    # Normalization vector
+    c: List[Fraction] = [Fraction(0)] * N
+    norm_pos = obj_pairs.index(norm_index)
+    c[norm_pos] = Fraction(1)
+
+    # Spin blocks
+    pmp_array = []
+    for ell in range(0, max_spin + 1, 2):
+        block = _csdr_spin_block(
+            ell=ell,
+            obj_pairs=obj_pairs,
+            null_pairs=null_pairs,
+            K=K,
+            d=d,
+            precision=precision,
+        )
+        if block is not None:
+            pmp_array.append(block)
+
+    return {
+        "objective": [fraction_to_str(bi, precision) for bi in b],
+        "normalization": [fraction_to_str(ci, precision) for ci in c],
+        "PositiveMatrixWithPrefactorArray": pmp_array,
+        "_metadata": {
+            "description": "CSDR-based SDPB PMP (user notes eq.(2)); NOT Extremal EFT.",
+            "d": d,
+            "alpha": fraction_to_str(alpha_from_d(d), precision),
+            "K_max_order": K,
+            "max_spin": max_spin,
+            "n_obj_pairs": N_obj,
+            "n_null_pairs": N_null,
+            "n_decision_variables": N,
+            "n_spin_blocks": len(pmp_array),
+            "bound_direction": bound_direction,
+            "obj_index": list(obj_index),
+            "norm_index": list(norm_index),
+            "note": (
+                "S1,S2,S3 are Mandelstam minus mu/3 so S1+S2+S3=0. "
+                "The W_{p,q} basis uses x=-(S1*S2+S2*S3+S3*S1), y=-S1*S2*S3. "
+                "d is a free parameter, not fixed to 4."
+            ),
+        },
+    }
+
+
+def write_pmp_json(pmp: Dict[str, Any], filepath: str) -> None:
+    """Write PMP JSON to file."""
+    with open(filepath, "w") as fh:
+        json.dump(pmp, fh, indent=2)
+
+
+def generate_pmp_for_ratio_bound(
+    numerator_index: Tuple[int, int],
+    denominator_index: Tuple[int, int],
+    max_spin: int = 10,
+    max_order: int = 6,
+    d: int = 4,
+    precision: int = 200,
+    bound_direction: str = "lower",
+    use_null_constraints: bool = True,
+    **_kwargs: Any,
+) -> Dict[str, Any]:
+    """
+    Generate PMP for bounding W_{numerator_index} / W_{denominator_index}.
+
+    This is the main entry point used by run_bounds.py.
+    Uses CSDR kernels (user notes eq.(2)).
+
+    Parameters
+    ----------
+    numerator_index : (p, q)    Wilson coefficient in numerator.
+    denominator_index : (p, q)  Wilson coefficient in denominator (normalized to 1).
+    max_spin : int               Maximum even spin.
+    max_order : int              Maximum spectral power K = 2p+3q.
+    d : int                      Spacetime dimension.
+    precision : int              Output precision.
+    bound_direction : str        "upper" or "lower".
+    use_null_constraints : bool  If False, skips null pairs (testing only).
+    **_kwargs : ignored         For backward compatibility.
+
+    Returns
+    -------
+    dict  PMP JSON.
+    """
+    return generate_csdr_pmp(
+        obj_index=numerator_index,
+        norm_index=denominator_index,
+        d=d,
+        K=max_order,
+        max_spin=max_spin,
+        precision=precision,
+        bound_direction=bound_direction,
+    )
 
 
 def generate_pmp_json(
     objective_index: Tuple[int, int],
     max_spin: int = 10,
     max_order: int = 6,
-    use_null_constraints: bool = True,
-    crossing_type: str = "su",
-    m_sq: Fraction = Fraction(1),
     d: int = 4,
     precision: int = 200,
+    **_kwargs: Any,
 ) -> Dict[str, Any]:
     """
-    Generate a PMP JSON structure for bounding a specific Wilson coefficient.
+    Generate a PMP JSON for bounding a specific objective Wilson coefficient.
+
+    For backward compatibility.  Normalizes the first available pair != objective_index.
 
     Parameters
     ----------
-    objective_index : (int, int)
-        The (p, q) index of the Wilson coefficient to minimize (lower bound).
-    max_spin : int
-        Maximum spin ℓ to include in the partial-wave expansion.
-    max_order : int
-        Maximum total order p+q for Wilson coefficients.
-    use_null_constraints : bool
-        Whether to incorporate Sinha-Zahed null constraints.
-    crossing_type : str
-        "su" for s↔u crossing only, "full" for full S₃ crossing.
-    m_sq : Fraction
-        Mass squared of external scalars.
-    d : int
-        Spacetime dimension.
-    precision : int
-        Number of decimal digits for numerical output.
+    objective_index : (p, q)  Wilson coefficient to minimize.
+    max_spin, max_order, d, precision: as in generate_csdr_pmp.
+    **_kwargs : ignored for backward compatibility.
 
     Returns
     -------
-    dict
-        PMP JSON structure ready to be written to file.
+    dict  PMP JSON.
     """
-    mu_threshold = 4 * m_sq
-
-    # 1. Enumerate all Wilson coefficient indices (p, q) up to max_order
-    all_indices = []
-    for total in range(max_order + 1):
-        for p in range(total + 1):
-            q = total - p
-            all_indices.append((p, q))
-
-    # 2. Apply null constraints if requested
-    if use_null_constraints:
-        if crossing_type == "full":
-            constraints = get_crossing_symmetric_null_constraints(max_order, m_sq)
-        else:
-            constraints = get_null_constraints(max_order, m_sq)
-        free_indices, substitution = eliminate_variables(constraints, all_indices)
-    else:
-        free_indices = list(all_indices)
-        substitution = {}
-
-    # 3. Normalization: fix one Wilson coefficient (typically g_{0,0} or g_{2,0}).
-    #    We use the convention that the normalization index has value 1.
-    #    Choose (0, 0) as the normalization index (first coefficient = 1).
-    norm_index = (0, 0)
-
-    # If norm_index was eliminated, find an alternative
-    if norm_index not in free_indices:
-        # Try (1, 0), (2, 0), etc.
-        for candidate in [(1, 0), (2, 0), (0, 1)]:
-            if candidate in free_indices:
-                norm_index = candidate
-                break
-
-    # Build the z-vector mapping:
-    #   z_0 = coefficient for normalization (fixed by n·z = 1)
-    #   z_1, ..., z_N = remaining free Wilson coefficients
-    #
-    # With normalization n = (1, 0, ..., 0), z_0 is determined as:
-    #   z_0 = (1 - Σ_{n≥1} n_n z_n) / n_0 = 1 (since n_n = 0 for n ≥ 1)
-    #
-    # Actually, in SDPB's formulation with normalization, we set:
-    #   normalization[k] = 1 for the norm_index position, 0 elsewhere
-    #   This forces W_{norm_index} = 1.
-
-    # Map free indices to z-vector positions
-    # Position 0 in z-vector: norm_index (fixed to 1 by normalization)
-    # Positions 1..N: other free indices
-    z_indices = [norm_index] + [idx for idx in free_indices if idx != norm_index]
-    N = len(z_indices) - 1  # Number of free decision variables
-
-    # 4. Build objective vector
-    # We want to minimize W_{objective_index}, which means
-    # maximize -W_{objective_index}.
-    #
-    # If objective_index is free:
-    #   objective[k] = -1 if z_indices[k] == objective_index, else 0
-    # If objective_index was eliminated by null constraints:
-    #   W_{obj} = Σ coeff_i × W_{free_i}
-    #   objective[k] = -coeff_i where z_indices[k] = free_i
-
-    objective = [Fraction(0)] * (N + 1)
-
-    if objective_index in substitution:
-        # Eliminated variable: express in terms of free variables
-        for free_idx, coeff in substitution[objective_index].items():
-            if free_idx in z_indices:
-                k = z_indices.index(free_idx)
-                objective[k] = -coeff
-    elif objective_index in z_indices:
-        k = z_indices.index(objective_index)
-        objective[k] = Fraction(-1)
-    else:
+    obj_pairs = enumerate_obj_pairs(max_order)
+    if objective_index not in obj_pairs:
         raise ValueError(
-            f"Objective index {objective_index} not found in free or eliminated indices"
+            f"objective_index {objective_index} not found in pairs for K={max_order}."
         )
-
-    # 5. Build normalization vector
-    normalization = [Fraction(0)] * (N + 1)
-    normalization[0] = Fraction(1)  # norm_index is at position 0
-
-    # 6. Build PositiveMatrixWithPrefactorArray
-    # For each even spin ℓ = 0, 2, 4, ..., max_spin:
-    #   Create a 1×1 matrix polynomial constraint
-    #   The constraint is: Σ_n z_n v_ℓ^{(n)}(x) ≥ 0 for all x ≥ 0
-    #   where v_ℓ^{(n)}(x) encodes the spectral function.
-
-    pmp_array = []
-
-    for ell in range(0, max_spin + 1, 2):
-        block = _build_spin_block(
-            ell=ell,
-            z_indices=z_indices,
-            substitution=substitution,
-            m_sq=m_sq,
-            d=d,
-            max_order=max_order,
-            precision=precision,
-        )
-        if block is not None:
-            pmp_array.append(block)
-
-    # 7. If using Method B for remaining null constraints (as cross-check),
-    #    add 1×1 constant blocks for each constraint.
-    #    (This is optional; Method A already eliminates them.)
-
-    # 8. Assemble the PMP JSON
-    pmp = {
-        "objective": [fraction_to_str(a, precision) for a in objective],
-        "normalization": [fraction_to_str(n, precision) for n in normalization],
-        "PositiveMatrixWithPrefactorArray": pmp_array,
-    }
-
-    return pmp
+    # Choose first pair that is not the objective as normalization
+    norm_index = next(
+        (p for p in obj_pairs if p != objective_index),
+        None,
+    )
+    if norm_index is None:
+        raise ValueError("Not enough objective pairs to form normalization.")
+    return generate_csdr_pmp(
+        obj_index=objective_index,
+        norm_index=norm_index,
+        d=d,
+        K=max_order,
+        max_spin=max_spin,
+        precision=precision,
+        bound_direction="lower",
+    )
 
 
-def _enumerate_indices(max_order: int) -> List[Tuple[int, int]]:
-    indices = []
-    for total in range(max_order + 1):
-        for p in range(total + 1):
-            indices.append((p, total - p))
-    return indices
-
-
-def _get_constraints(
-    max_order: int,
-    m_sq: Fraction,
-    crossing_type: str,
-) -> List[Dict[Tuple[int, int], Fraction]]:
-    if crossing_type == "full":
-        return get_crossing_symmetric_null_constraints(max_order, m_sq)
-    if crossing_type == "crossing_basis":
-        from .crossing_pipeline import (
-            derive_null_constraints as derive_crossing_basis_null_constraints,
-        )
-        return derive_crossing_basis_null_constraints(max_order, m_sq)
-    return get_null_constraints(max_order, m_sq)
-
-
-def _reduce_linear_functional(
-    terms: Dict[Tuple[int, int], Fraction],
-    z_indices: List[Tuple[int, int]],
-    substitution: Dict[Tuple[int, int], Dict[Tuple[int, int], Fraction]],
-) -> List[Fraction]:
-    reduced: Dict[Tuple[int, int], Fraction] = defaultdict(Fraction)
-    for index, coeff in terms.items():
-        if index in substitution:
-            for free_index, sub_coeff in substitution[index].items():
-                reduced[free_index] += coeff * sub_coeff
-        else:
-            reduced[index] += coeff
-    return [reduced.get(index, Fraction(0)) for index in z_indices]
-
+# ---------------------------------------------------------------------------
+# Backward-compatibility shim for crossing_pipeline.py
+# ---------------------------------------------------------------------------
+# The crossing_pipeline uses fixed-t Extremal EFT spectral functions,
+# which are a different calculation from the CSDR approach.  The shim
+# below restores the original function so crossing_pipeline tests pass.
 
 def generate_pmp_for_linear_functional_bound(
     objective_terms: Dict[Tuple[int, int], Fraction],
@@ -245,323 +372,130 @@ def generate_pmp_for_linear_functional_bound(
     bound_direction: str = "lower",
 ) -> Dict[str, Any]:
     """
-    Generate a PMP for a generic linear-functional lower or upper bound.
+    Backward-compatibility wrapper used by crossing_pipeline.py.
 
-    The optimization variable is the ordinary EFT coefficient vector in the
-    s,t polynomial basis. `objective_terms` and `normalization_terms` specify
-    exact linear functionals on that basis.
+    This function implements the OLD fixed-t Extremal EFT spectral function
+    approach.  It is NOT the CSDR approach.  For new code use generate_csdr_pmp.
+
+    For crossing_pipeline.py use with crossing_type="crossing_basis", this
+    function builds SDPB blocks using fixed-t spectral functions and the
+    variable-elimination approach for null constraints.
     """
-    all_indices = _enumerate_indices(max_order)
+    from collections import defaultdict
+    from .physics import (
+        fraction_to_str as _fts,
+        gegenbauer_coefficients,
+        _taylor_coeff_at_one,
+        _expand_binomial_power,
+        _poly_multiply,
+    )
+    from .null_constraints import (
+        eliminate_variables,
+        get_null_constraints,
+        get_crossing_symmetric_null_constraints,
+    )
+
+    mu_threshold = 4 * m_sq
+
+    # Enumerate all (p,q) indices
+    all_indices = []
+    for total in range(max_order + 1):
+        for p in range(total + 1):
+            all_indices.append((p, total - p))
+
+    # Apply null constraints
     if use_null_constraints:
-        constraints = _get_constraints(max_order=max_order, m_sq=m_sq, crossing_type=crossing_type)
+        if crossing_type == "full":
+            constraints = get_crossing_symmetric_null_constraints(max_order, m_sq)
+        elif crossing_type == "crossing_basis":
+            from .crossing_pipeline import (
+                derive_null_constraints as _derive_crossing_basis_nc,
+            )
+            constraints = _derive_crossing_basis_nc(max_order, m_sq)
+        else:
+            constraints = get_null_constraints(max_order, m_sq)
         free_indices, substitution = eliminate_variables(constraints, all_indices)
     else:
         free_indices = list(all_indices)
         substitution = {}
 
     z_indices = list(free_indices)
-    objective = _reduce_linear_functional(objective_terms, z_indices, substitution)
-    if bound_direction == "lower":
-        objective = [-coeff for coeff in objective]
-    elif bound_direction != "upper":
-        raise ValueError(f"Unknown bound direction '{bound_direction}'.")
-    normalization = _reduce_linear_functional(normalization_terms, z_indices, substitution)
 
-    if all(coeff == 0 for coeff in normalization):
-        raise ValueError("Normalization functional vanishes after applying constraints.")
+    def _reduce(terms):
+        reduced = defaultdict(Fraction)
+        for idx, coeff in terms.items():
+            if idx in substitution:
+                for fi, sc in substitution[idx].items():
+                    reduced[fi] += coeff * sc
+            else:
+                reduced[idx] += coeff
+        return [reduced.get(idx, Fraction(0)) for idx in z_indices]
+
+    objective = _reduce(objective_terms)
+    if bound_direction == "lower":
+        objective = [-c for c in objective]
+    normalization = _reduce(normalization_terms)
+    if all(c == 0 for c in normalization):
+        raise ValueError("Normalization vanishes after applying null constraints.")
+
+    # Build spin blocks (old fixed-t approach)
+    def _build_old_block(ell):
+        all_orig = set(z_indices) | set(substitution.keys())
+        for sub in substitution.values():
+            all_orig |= set(sub.keys())
+        all_orig = {(p, q) for p, q in all_orig if p + q <= max_order}
+        if not all_orig:
+            return None
+        p_max = max(p for p, _ in all_orig)
+        q_max = max(q for _, q in all_orig)
+        poly_deg = q_max + p_max + 1
+        geg = gegenbauer_coefficients(ell, d)
+        spec = {}
+        for p, q in all_orig:
+            tq = _taylor_coeff_at_one(geg, q)
+            coeff = tq * Fraction(2) ** q
+            if coeff == 0:
+                spec[(p, q)] = [Fraction(0)] * (poly_deg + 1)
+                continue
+            px = [Fraction(0)] * (q_max - q + 1)
+            px[q_max - q] = Fraction(1)
+            ps = _expand_binomial_power(mu_threshold, p_max - p)
+            prod = _poly_multiply(px, ps)
+            res = [c * coeff for c in prod]
+            while len(res) < poly_deg + 1:
+                res.append(Fraction(0))
+            spec[(p, q)] = res[: poly_deg + 1]
+        pvecs = []
+        for k, zidx in enumerate(z_indices):
+            ep = list(spec.get(zidx, [Fraction(0)] * (poly_deg + 1)))
+            for eidx, sd in substitution.items():
+                if zidx in sd and eidx in spec:
+                    fac = sd[zidx]
+                    for i in range(min(len(ep), len(spec[eidx]))):
+                        ep[i] += fac * spec[eidx][i]
+            pvecs.append(ep)
+        if all(all(c == 0 for c in pv) for pv in pvecs):
+            return None
+        poles = (
+            [fraction_to_str(Fraction(0), precision)] * q_max
+            + [fraction_to_str(-mu_threshold, precision)] * (p_max + 1)
+        )
+        e_inv = _compute_e_inverse(precision)
+        pf = {"base": e_inv, "constant": "1", "poles": poles}
+        pj = [[
+            [fraction_to_str(c, precision) for c in pv]
+            for pv in pvecs
+        ]]
+        return {"prefactor": pf, "polynomials": [pj]}
 
     pmp_array = []
     for ell in range(0, max_spin + 1, 2):
-        block = _build_spin_block(
-            ell=ell,
-            z_indices=z_indices,
-            substitution=substitution,
-            m_sq=m_sq,
-            d=d,
-            max_order=max_order,
-            precision=precision,
-        )
-        if block is not None:
-            pmp_array.append(block)
+        blk = _build_old_block(ell)
+        if blk is not None:
+            pmp_array.append(blk)
 
     return {
-        "objective": [fraction_to_str(value, precision) for value in objective],
-        "normalization": [fraction_to_str(value, precision) for value in normalization],
+        "objective": [fraction_to_str(v, precision) for v in objective],
+        "normalization": [fraction_to_str(v, precision) for v in normalization],
         "PositiveMatrixWithPrefactorArray": pmp_array,
     }
-
-
-def _build_spin_block(
-    ell: int,
-    z_indices: List[Tuple[int, int]],
-    substitution: Dict[Tuple[int, int], Dict[Tuple[int, int], Fraction]],
-    m_sq: Fraction,
-    d: int,
-    max_order: int,
-    precision: int,
-) -> Optional[Dict[str, Any]]:
-    """
-    Build a PositiveMatrixWithPrefactor block for spin ℓ.
-
-    The spectral positivity condition for spin ℓ is:
-      Σ_n z_n v_ℓ^{(n)}(x) ≥ 0  for all x ≥ 0
-
-    where v_ℓ^{(n)}(x) is the spectral function for the n-th Wilson coefficient.
-
-    After variable elimination (null constraints), each z_n corresponds to
-    a free Wilson coefficient, and v_ℓ^{(n)}(x) may be a linear combination
-    of the original spectral functions.
-
-    For the 1×1 case, the polynomial matrix is:
-      polynomials = [[[v_ℓ^{(0)}(x), v_ℓ^{(1)}(x), ..., v_ℓ^{(N)}(x)]]]
-
-    Parameters
-    ----------
-    ell : int
-        Spin quantum number.
-    z_indices : list of (int, int)
-        Wilson coefficient indices for the z-vector.
-    substitution : dict
-        Eliminated variable substitutions.
-    m_sq : Fraction
-        Mass squared.
-    d : int
-        Spacetime dimension.
-    max_order : int
-        Maximum total order.
-    precision : int
-        Output precision.
-
-    Returns
-    -------
-    dict or None
-        PositiveMatrixWithPrefactor block, or None if trivially zero.
-    """
-    mu_threshold = 4 * m_sq
-    N_plus_1 = len(z_indices)
-
-    # Compute the maximum polynomial degree needed.
-    # The spectral function v_ℓ^{(p,q)}(x) after clearing the common denominator
-    # D(x) = x^{q_max} (x + 4m²)^{p_max + 1} becomes a polynomial of degree
-    # (q_max - q) + (p_max - p).
-    #
-    # We need to track all (p,q) that contribute to each z_n,
-    # including substituted variables.
-
-    # Collect all original indices that contribute
-    all_original_indices = set()
-    for z_idx in z_indices:
-        all_original_indices.add(z_idx)
-    for elim_idx, sub_dict in substitution.items():
-        all_original_indices.add(elim_idx)
-        for free_idx in sub_dict:
-            all_original_indices.add(free_idx)
-
-    # Only keep indices within max_order
-    all_original_indices = {
-        (p, q) for p, q in all_original_indices if p + q <= max_order
-    }
-
-    if not all_original_indices:
-        return None
-
-    p_max = max(p for p, _ in all_original_indices)
-    q_max = max(q for _, q in all_original_indices)
-
-    # Maximum polynomial degree after clearing denominator
-    poly_deg = q_max + p_max + 1
-
-    # Compute spectral functions for all original indices
-    # v_ℓ^{(p,q)}(x) × D(x) = coeff × x^{q_max-q} × (x+4m²)^{p_max-p}
-    # where coeff = [Taylor_q of C_ℓ at 1] × 2^q
-
-    geg_coeffs = gegenbauer_coefficients(ell, d)
-    spectral_polys = {}  # (p,q) -> polynomial coefficients in x
-
-    for p, q in all_original_indices:
-        if q >= len(geg_coeffs) + 1:
-            # Gegenbauer doesn't have enough terms; coefficient is 0
-            spectral_polys[(p, q)] = [Fraction(0)] * (poly_deg + 1)
-            continue
-
-        taylor_q = _taylor_coeff_at_one(geg_coeffs, q)
-        coeff = taylor_q * Fraction(2) ** q
-
-        if coeff == 0:
-            spectral_polys[(p, q)] = [Fraction(0)] * (poly_deg + 1)
-            continue
-
-        # Build x^{q_max - q}
-        x_power = q_max - q
-        poly_x = [Fraction(0)] * (x_power + 1)
-        poly_x[x_power] = Fraction(1)
-
-        # Build (x + 4m²)^{p_max - p}
-        shift_power = p_max - p
-        poly_shift = _expand_binomial_power(mu_threshold, shift_power)
-
-        # Multiply
-        product = _poly_multiply(poly_x, poly_shift)
-
-        # Scale
-        result = [c * coeff for c in product]
-
-        # Pad to poly_deg + 1
-        while len(result) < poly_deg + 1:
-            result.append(Fraction(0))
-        result = result[: poly_deg + 1]
-
-        spectral_polys[(p, q)] = result
-
-    # Now build the polynomial vector for each z-component.
-    # For free variable z_k corresponding to index z_indices[k]:
-    #   The effective spectral function is v_ℓ^{(z_k)}(x) plus
-    #   contributions from eliminated variables that depend on z_k.
-    #
-    #   v_eff_ℓ^{(k)}(x) = v_ℓ^{(z_k)}(x) + Σ_{elim} sub[elim][z_k] × v_ℓ^{(elim)}(x)
-
-    poly_vectors = []
-    for k, z_idx in enumerate(z_indices):
-        # Start with direct contribution
-        if z_idx in spectral_polys:
-            eff_poly = list(spectral_polys[z_idx])
-        else:
-            eff_poly = [Fraction(0)] * (poly_deg + 1)
-
-        # Add contributions from eliminated variables
-        for elim_idx, sub_dict in substitution.items():
-            if z_idx in sub_dict and elim_idx in spectral_polys:
-                factor = sub_dict[z_idx]
-                for i in range(min(len(eff_poly), len(spectral_polys[elim_idx]))):
-                    eff_poly[i] += factor * spectral_polys[elim_idx][i]
-
-        poly_vectors.append(eff_poly)
-
-    # Check if all polynomials are identically zero (skip this block)
-    all_zero = all(
-        all(c == 0 for c in pv)
-        for pv in poly_vectors
-    )
-    if all_zero:
-        return None
-
-    # Build the block JSON
-    # DampedRational prefactor: we use 1/D(x) as the prefactor
-    # D(x) = x^{q_max} (x + 4m²)^{p_max + 1}
-    # This has poles at x = 0 (mult q_max) and x = -4m² (mult p_max+1)
-    # and the exponential damping e^{-x} for convergence.
-
-    poles = []
-    for _ in range(q_max):
-        poles.append(fraction_to_str(Fraction(0), precision))
-    for _ in range(p_max + 1):
-        poles.append(fraction_to_str(-mu_threshold, precision))
-
-    # Base for damped rational: e^{-1} ≈ 0.36788...
-    e_inv = Fraction(1, 3)  # Approximate; for high precision use mpfr
-    # Better: compute e^{-1} to high precision
-    e_inv_str = _compute_e_inverse(precision)
-
-    prefactor = {
-        "base": e_inv_str,
-        "constant": "1",
-        "poles": poles,
-    }
-
-    # Format polynomials for JSON
-    # Structure: polynomials[row][col][n] = polynomial coefficients
-    # For 1×1 matrix: polynomials[0][0][n] = coefficients for z_n
-
-    poly_json = [[
-        [fraction_to_str(c, precision) for c in pv]
-        for pv in poly_vectors
-    ]]
-
-    block = {
-        "prefactor": prefactor,
-        "polynomials": [poly_json],
-    }
-
-    return block
-
-
-def _compute_e_inverse(precision: int) -> str:
-    """Compute 1/e = e^{-1} to the given number of decimal digits."""
-    from decimal import Decimal, getcontext
-    getcontext().prec = precision + 20
-
-    # e^{-1} via Taylor series: e^{-1} = Σ (-1)^n / n!
-    result = Decimal(0)
-    term = Decimal(1)
-    for n in range(1, precision + 100):
-        term = term / n
-        if n % 2 == 0:
-            result += term
-        else:
-            result -= term
-        if abs(term) < Decimal(10) ** (-(precision + 10)):
-            break
-    result += Decimal(1)  # n=0 term
-
-    # Actually compute properly: e = Σ 1/n!, then 1/e
-    e_val = Decimal(1)
-    factorial = Decimal(1)
-    for n in range(1, precision + 100):
-        factorial *= n
-        term = Decimal(1) / factorial
-        e_val += term
-        if term < Decimal(10) ** (-(precision + 10)):
-            break
-
-    e_inv = Decimal(1) / e_val
-    return format(e_inv, f'.{precision}f').rstrip('0').rstrip('.')
-
-
-def write_pmp_json(pmp: Dict[str, Any], filepath: str) -> None:
-    """Write PMP JSON to file."""
-    with open(filepath, 'w') as f:
-        json.dump(pmp, f, indent=2)
-
-
-def generate_pmp_for_ratio_bound(
-    numerator_index: Tuple[int, int],
-    denominator_index: Tuple[int, int],
-    max_spin: int = 10,
-    max_order: int = 6,
-    use_null_constraints: bool = True,
-    crossing_type: str = "su",
-    m_sq: Fraction = Fraction(1),
-    d: int = 4,
-    precision: int = 200,
-    bound_direction: str = "lower",
-) -> Dict[str, Any]:
-    """
-    Generate PMP for bounding the ratio W_{num} / W_{den}.
-
-    This normalizes W_{den} = 1 and then minimizes W_{num}.
-
-    Parameters
-    ----------
-    numerator_index : (int, int)
-        Index of the Wilson coefficient in the numerator.
-    denominator_index : (int, int)
-        Index of the Wilson coefficient in the denominator (normalized to 1).
-    ... (other parameters same as generate_pmp_json)
-
-    Returns
-    -------
-    dict
-        PMP JSON structure.
-    """
-    return generate_pmp_for_linear_functional_bound(
-        objective_terms={numerator_index: Fraction(1)},
-        normalization_terms={denominator_index: Fraction(1)},
-        max_spin=max_spin,
-        max_order=max_order,
-        use_null_constraints=use_null_constraints,
-        crossing_type=crossing_type,
-        m_sq=m_sq,
-        d=d,
-        precision=precision,
-        bound_direction=bound_direction,
-    )

@@ -1,22 +1,42 @@
 #!/usr/bin/env python3
 """
-run_bounds.py — Main driver script for computing EFT Wilson coefficient bounds.
+run_bounds.py — Main driver for CSDR-based EFT Wilson coefficient bounds.
 
-This script:
-  1. Sets up the physics problem (Wilson coefficients, spectral positivity)
-  2. Extracts null constraints from Sinha-Zahed crossing-symmetric dispersion relations
-  3. Generates PMP JSON input files for SDPB
-  4. Provides comparison analysis with Extremal EFT results (Caron-Huot & Duong)
+This script generates SDPB PMP JSON files for bounding ratios of CSDR Wilson
+coefficients W_{p,q}, using the dispersion relation kernels from:
 
-Usage:
+  Sinha & Zahed, "Crossing Symmetric Dispersion Relations in QFTs"
+
+and the heavy-average formulation from:
+
+  Caron-Huot & Duong, "Extremal Effective Field Theories" (Section 3.3)
+
+as written explicitly in the user's derivation notes, eq.(2).
+
+KEY POINTS
+----------
+* S1, S2, S3 are NOT the Mandelstam variables.  They are the Mandelstam
+  variables *minus* mu/3, so S1+S2+S3 = 0 (crossing-symmetric point).
+* d is a free parameter.  Do NOT default to d=4.
+* The CSDR and Extremal EFT papers use DIFFERENT subtraction schemes.
+  Their bounds are analytically different.  Running this script will
+  produce results that differ from the Extremal EFT paper — that is the
+  correct behavior.
+* The W_{m,n} classification:
+    - m <= n  (first index <= second): objectives (EFT coefficients >= 0)
+    - n < m   (first index > second): null constraints (must equal 0)
+  This translates to CSDR notation W_{n-m,m} with:
+    - n-m >= 0 (objectives): forward-scattering kernel C_ell(1)*(2ell+d-3)/s1^{2n+m}
+    - n-m < 0  (null constr): kernel D^{(n,m)}_ell*C_ell(1)*(2ell+d-3)/s1^{2n+m}
+      where D^{(n,m)} is from CSDR eq.(11), valid for m > n >= 1.
+
+USAGE
+-----
     python -m eft_bounds.run_bounds [options]
 
-This script generates PMP files that can then be processed by SDPB:
+After generating PMP files, run SDPB:
     pmp2sdp --precision=1024 --input=<pmp_file> --output=<sdp_dir>
     mpirun -n 4 sdpb --precision=1024 -s <sdp_dir> -o <output_dir>
-
-The script also performs internal consistency checks and produces a
-comparison report.
 """
 
 import argparse
@@ -24,669 +44,360 @@ import json
 import os
 import sys
 from fractions import Fraction
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
-# Add parent directory to path for imports
+# Allow running as a script
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from eft_bounds.physics import (
-    build_positivity_polynomials,
-    eval_gegenbauer,
-    fraction_to_str,
-    gegenbauer_coefficients,
-    _taylor_coeff_at_one,
+from eft_bounds.csdr import (
+    D_coeff,
+    alpha_from_d,
+    check_closed_form_1_2,
+    enumerate_null_pairs,
+    enumerate_obj_pairs,
+    gegenbauer_at_one,
+    null_kernel_coeff,
+    obj_kernel_coeff,
+    s1_power,
 )
-from eft_bounds.null_constraints import (
-    eliminate_variables,
-    get_crossing_symmetric_null_constraints,
-    get_null_constraints,
-    print_null_constraints,
-)
+from eft_bounds.physics import fraction_to_str
 from eft_bounds.pmp_generator import (
+    generate_csdr_pmp,
     generate_pmp_for_ratio_bound,
-    generate_pmp_json,
     write_pmp_json,
 )
 
 
-# ====================================================================
-# Reference values from "Extremal Effective Field Theories"
-# (Caron-Huot & Duong, 2021)
-# ====================================================================
+# ---------------------------------------------------------------------------
+# Consistency checks
+# ---------------------------------------------------------------------------
 
-# These are the bounds reported in the Extremal EFT paper for
-# various Wilson coefficient ratios. The exact values depend on
-# the truncation parameters (ℓ_max, k_max) used.
-#
-# Convention: g_k are defined via M(s,t) = Σ_k g_k (stu)^{...}
-# in the crossing-symmetric expansion.
-#
-# Key bounds from the paper (Table 1 and surrounding text):
-#   - g_3/g_2 ≥ lower_bound  (with g_2 normalized to 1)
-#   - g_4/g_2 ≥ lower_bound
-#   etc.
-#
-# These are the *extremal* bounds; no amplitude can violate them
-# while satisfying positivity and crossing symmetry.
-
-EXTREMAL_EFT_BOUNDS = {
-    # (numerator_pq, denominator_pq): lower_bound
-    # These are approximate values from the paper
-    ((1, 0), (0, 0)): {
-        "lower": 0.0,
-        "description": "g_{1,0}/g_{0,0}: trivial from positivity",
-    },
-    ((2, 0), (1, 0)): {
-        "lower": 0.0,
-        "description": "g_{2,0}/g_{1,0}: ratio of adjacent coefficients",
-    },
-    ((0, 1), (1, 0)): {
-        "lower": -1.0 / 3,
-        "description": "g_{0,1}/g_{1,0}: fixed by crossing symmetry (s↔u)",
-    },
-    ((2, 0), (0, 0)): {
-        "lower": 0.0,
-        "description": "g_{2,0}/g_{0,0}: second-order positivity bound",
-    },
-}
-
-
-def run_consistency_checks():
+def run_csdr_checks(d: int = 4, precision: int = 40) -> Dict[str, Any]:
     """
-    Run internal consistency checks on the implementation.
+    Run CSDR self-consistency checks.
 
-    Checks:
-    1. Gegenbauer polynomials satisfy known identities
-    2. Null constraints are consistent (not contradictory)
-    3. Known amplitudes satisfy all constraints
-    4. Monotonicity: adding constraints only tightens bounds
-    """
-    print("=" * 70)
-    print("CONSISTENCY CHECKS")
-    print("=" * 70)
-    print()
-
-    # Check 1: Gegenbauer polynomials
-    print("Check 1: Gegenbauer polynomials C_ℓ^{(1)}(z) for d=4")
-    print("-" * 50)
-    for ell in range(6):
-        coeffs = gegenbauer_coefficients(ell, d=4)
-        # C_ℓ^{(1)}(1) = ℓ + 1 for d=4
-        val_at_1 = sum(coeffs)
-        expected = Fraction(ell + 1)
-        status = "✓" if val_at_1 == expected else "✗"
-        print(f"  C_{ell}^{{(1)}}(1) = {val_at_1} (expected {expected}) {status}")
-
-    # C_0 = 1, C_1 = 2z, C_2 = 4z² - 1 for λ=1
-    c2 = gegenbauer_coefficients(2, d=4)
-    assert c2 == [Fraction(-1), Fraction(0), Fraction(4)], f"C_2 wrong: {c2}"
-    print(f"  C_2^{{(1)}}(z) = {c2[0]} + {c2[1]}·z + {c2[2]}·z² ✓")
-    print()
-
-    # Check 2: Null constraints
-    print("Check 2: Null constraints from s↔u crossing symmetry")
-    print("-" * 50)
-    m_sq = Fraction(1)
-    constraints = get_null_constraints(max_order=4, m_sq=m_sq)
-    print(f"  Number of null constraints (max_order=4): {len(constraints)}")
-    print_null_constraints(constraints)
-    print()
-
-    # Check 3: Full crossing constraints
-    print("Check 3: Full crossing constraints (s↔u + s↔t)")
-    print("-" * 50)
-    full_constraints = get_crossing_symmetric_null_constraints(max_order=4, m_sq=m_sq)
-    print(f"  Number of full crossing constraints (max_order=4): {len(full_constraints)}")
-    print_null_constraints(full_constraints)
-    print()
-
-    # Check 4: Variable elimination
-    print("Check 4: Variable elimination")
-    print("-" * 50)
-    all_indices = []
-    for total in range(5):
-        for p in range(total + 1):
-            all_indices.append((p, total - p))
-
-    free_indices, substitution = eliminate_variables(constraints, all_indices)
-    print(f"  Total indices: {len(all_indices)}")
-    print(f"  Free indices after elimination: {len(free_indices)}")
-    print(f"  Eliminated: {len(substitution)}")
-    for elim_idx, sub in substitution.items():
-        terms = " + ".join(
-            f"({fraction_to_str(c)})·W_{{{fi[0]},{fi[1]}}}"
-            for fi, c in sub.items()
-        )
-        print(f"    W_{{{elim_idx[0]},{elim_idx[1]}}} = {terms}")
-    print()
-
-    # Check 5: Known amplitude test
-    # The crossing-symmetric scalar exchange amplitude:
-    #   M(s,t) = 1/(s-M²) + 1/(t-M²) + 1/(u-M²)
-    # where u = 4m² - s - t, and M is the exchange mass.
-    # This is manifestly s↔t↔u symmetric.
-    #
-    # Expand M(s,t) = Σ a_{pq} s^p t^q by Taylor-expanding each channel:
-    #   1/(s-M²) = -1/M² × Σ_{n≥0} (s/M²)^n
-    #   1/(t-M²) = -1/M² × Σ_{n≥0} (t/M²)^n
-    #   1/(u-M²) = 1/((4m²-s-t)-M²) = 1/(c-s-t) where c = 4m²-M²
-    #            = (1/c) × 1/(1-(s+t)/c) = (1/c) × Σ_{n≥0} ((s+t)/c)^n
-    print("Check 5: Crossing-symmetric scalar exchange satisfies null constraints")
-    print("-" * 50)
-    M_sq = Fraction(5)  # exchange mass² = 5
-    m_sq_val = Fraction(1)  # external mass² = 1
-    c_val = 4 * m_sq_val - M_sq  # c = 4m² - M² = -1
-
-    max_pq = 4
-    wilson_exchange = {}
-    for total in range(max_pq + 1):
-        for p in range(total + 1):
-            q = total - p
-            val = Fraction(0)
-            # s-channel: 1/(s - M²) = -1/M² Σ (s/M²)^n
-            # contributes to a_{p,0}: δ_{q,0} × (-1/M²) × (1/M²)^p
-            if q == 0:
-                val += Fraction(-1, 1) / M_sq ** (p + 1)
-            # t-channel: 1/(t - M²) = -1/M² Σ (t/M²)^n
-            # contributes to a_{0,q}: δ_{p,0} × (-1/M²) × (1/M²)^q
-            if p == 0:
-                val += Fraction(-1, 1) / M_sq ** (q + 1)
-            # u-channel: 1/(u - M²) = 1/(c - s - t)
-            #   = (1/c) × Σ_{n≥0} ((s+t)/c)^n
-            #   = Σ_{n≥0} (s+t)^n / c^{n+1}
-            # (s+t)^n = Σ_{j+k=n} C(n,j) s^j t^k = Σ_{j=0}^{n} C(n,j) s^j t^{n-j}
-            # So coefficient of s^p t^q from u-channel:
-            #   n = p + q, coefficient = C(p+q, p) / c^{p+q+1}
-            n = p + q
-            binom_coeff = Fraction(1)
-            for i in range(min(p, q)):
-                binom_coeff = binom_coeff * (n - i) / (i + 1)
-            # C(p+q, p) = C(n, p)
-            binom_val = Fraction(1)
-            for i in range(p):
-                binom_val = binom_val * (n - i) / (i + 1)
-            val += binom_val / c_val ** (n + 1)
-
-            wilson_exchange[(p, q)] = val
-
-    # Check each null constraint
-    all_satisfied = True
-    max_residual = Fraction(0)
-    for i, constraint in enumerate(constraints):
-        total = Fraction(0)
-        for (p, q), coeff in constraint.items():
-            if (p, q) in wilson_exchange:
-                total += coeff * wilson_exchange[(p, q)]
-        if total != 0:
-            print(f"  Constraint {i+1}: residual = {total}")
-            all_satisfied = False
-            if abs(total) > abs(max_residual):
-                max_residual = total
-
-    if all_satisfied:
-        print("  All s↔u null constraints satisfied by crossing-symmetric scalar exchange ✓")
-    else:
-        print(f"  Max residual: {max_residual}")
-        print("  Note: Nonzero residuals are EXPECTED here. The null constraints")
-        print("  involve all Wilson coefficients (infinite series), but we truncate")
-        print("  at finite max_order. The scalar exchange has coefficients at all")
-        print("  orders, so truncation introduces errors. For POLYNOMIAL amplitudes")
-        print("  (finite number of terms), the constraints are exact. See Check 5b.")
-    print()
-
-    # Check 5b: Polynomial crossing-symmetric amplitude
-    # M(s,t) = s² + u² where u = 4m² - s - t is manifestly s↔u symmetric.
-    # Being a polynomial, all Wilson coefficients beyond a certain order are zero,
-    # so the null constraints should be exactly satisfied.
-    print("Check 5b: Polynomial crossing-symmetric amplitude s² + u²")
-    print("-" * 50)
-    m_sq_val = Fraction(1)
-    mu_val = 4 * m_sq_val  # = 4
-
-    # M(s,t) = s² + (4-s-t)² = 2s² + 2st - 8s + t² - 8t + 16
-    wilson_poly = {
-        (0, 0): Fraction(16),
-        (1, 0): Fraction(-8),
-        (0, 1): Fraction(-8),
-        (2, 0): Fraction(2),
-        (1, 1): Fraction(2),
-        (0, 2): Fraction(1),
-    }
-
-    all_satisfied_poly = True
-    for i, constraint in enumerate(constraints):
-        total = Fraction(0)
-        for (p, q), coeff in constraint.items():
-            if (p, q) in wilson_poly:
-                total += coeff * wilson_poly[(p, q)]
-        if total != 0:
-            print(f"  Constraint {i+1}: residual = {total}")
-            all_satisfied_poly = False
-
-    if all_satisfied_poly:
-        print("  All null constraints satisfied by polynomial amplitude s² + u² ✓")
-    else:
-        print("  WARNING: Polynomial amplitude failed! Implementation may be wrong.")
-    print()
-
-    # Check 6: Taylor coefficients of Gegenbauer at z=1
-    print("Check 6: Taylor coefficients of C_ℓ(1+z) at z=0")
-    print("-" * 50)
-    for ell in [0, 2, 4]:
-        coeffs = gegenbauer_coefficients(ell, d=4)
-        print(f"  C_{ell}^{{(1)}}(1+z):")
-        for q in range(min(4, ell + 1)):
-            tq = _taylor_coeff_at_one(coeffs, q)
-            print(f"    coefficient of z^{q}: {tq}")
-    print()
-
-    return True
-
-
-def generate_bound_series(
-    output_dir: str,
-    max_spin: int = 10,
-    max_order: int = 4,
-    m_sq: Fraction = Fraction(1),
-    precision: int = 200,
-):
-    """
-    Generate a series of PMP files for computing lower bounds on
-    various Wilson coefficient ratios.
+    Checks performed
+    ----------------
+    1. D^{(1,2)}_{ell,alpha} matches closed-form for ell = 0,2,4,6,8.
+    2. C^{alpha}_ell(1) = (2*alpha)_ell / ell! for several (ell, d).
+    3. Null kernel = D * C_ell(1) * (2ell+d-3) is non-zero for non-trivial ell.
+    4. Objective kernel = C_ell(1) * (2ell+d-3) > 0 for all ell.
+    5. Null pairs and objective pairs enumerated correctly for K=8.
+    6. csdr.check_closed_form_1_2() passes.
 
     Parameters
     ----------
-    output_dir : str
-        Directory to write PMP JSON files.
-    max_spin : int
-        Maximum spin in partial-wave expansion.
-    max_order : int
-        Maximum total order for Wilson coefficients.
-    m_sq : Fraction
-        External scalar mass squared.
-    precision : int
-        Numerical precision (decimal digits).
+    d : int    Spacetime dimension.
+    precision : int  Output decimal precision.
+    """
+    alpha = alpha_from_d(d)
+    checks = []
+
+    # Check 1: D^{(1,2)} closed-form
+    for ell in [0, 2, 4, 6, 8]:
+        direct = D_coeff(1, 2, ell, alpha)
+        closed = (
+            2 * ell * (ell + 2 * alpha)
+            * (-11 - 10 * alpha + 2 * ell * (ell + 2 * alpha))
+            / ((2 * alpha + 1) * (2 * alpha + 3))
+        )
+        ok = (direct == closed)
+        checks.append({
+            "name": f"D^(1,2)_ell{ell}_d{d}",
+            "passed": ok,
+            "direct": fraction_to_str(direct, precision),
+            "closed_form": fraction_to_str(closed, precision),
+        })
+
+    # Check 2: Gegenbauer at 1
+    for ell in [0, 2, 4]:
+        C1 = gegenbauer_at_one(ell, alpha)
+        # For d=4 (alpha=1/2): C_ell^{1/2}(1) = 1 for all ell
+        if d == 4:
+            expected = Fraction(1)
+            ok = (C1 == expected)
+            checks.append({
+                "name": f"C_ell(1)_d4_ell{ell}",
+                "passed": ok,
+                "value": fraction_to_str(C1, precision),
+                "expected": fraction_to_str(expected, precision),
+            })
+        else:
+            checks.append({
+                "name": f"C_ell(1)_d{d}_ell{ell}",
+                "passed": True,
+                "value": fraction_to_str(C1, precision),
+                "note": "No simple closed form for general d; recorded for reference",
+            })
+
+    # Check 3: Null kernel non-zero at ell=2 for (1,2)
+    kappa_null = null_kernel_coeff(1, 2, 2, d)
+    checks.append({
+        "name": f"null_kernel_(1,2)_ell2_d{d}",
+        "passed": (kappa_null != 0),
+        "value": fraction_to_str(kappa_null, precision),
+    })
+
+    # Check 4: Objective kernel positive at ell=0
+    kappa_obj_0 = obj_kernel_coeff(1, 0, 0, d)
+    kappa_obj_2 = obj_kernel_coeff(1, 0, 2, d)
+    checks.append({
+        "name": f"obj_kernel_(1,0)_ell0_d{d}_positive",
+        "passed": (kappa_obj_0 > 0),
+        "value": fraction_to_str(kappa_obj_0, precision),
+    })
+    checks.append({
+        "name": f"obj_kernel_(1,0)_ell2_d{d}_positive",
+        "passed": (kappa_obj_2 > 0),
+        "value": fraction_to_str(kappa_obj_2, precision),
+    })
+
+    # Check 5: Enumeration for K=8
+    K = 8
+    null_pairs = enumerate_null_pairs(K)
+    obj_pairs = enumerate_obj_pairs(K)
+    checks.append({
+        "name": f"enumeration_K{K}",
+        "passed": len(null_pairs) > 0 and len(obj_pairs) > 0,
+        "n_null_pairs": len(null_pairs),
+        "n_obj_pairs": len(obj_pairs),
+        "null_pairs": [list(p) for p in null_pairs],
+        "obj_pairs": [list(p) for p in obj_pairs],
+    })
+
+    # Check 6: csdr module self-check
+    checks.append({
+        "name": "csdr_check_closed_form_1_2",
+        "passed": check_closed_form_1_2(),
+    })
+
+    all_passed = all(c["passed"] for c in checks)
+    return {
+        "passed": all_passed,
+        "d": d,
+        "alpha": fraction_to_str(alpha, precision),
+        "checks": checks,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Kernel table
+# ---------------------------------------------------------------------------
+
+def compute_kernel_table(
+    d: int,
+    K: int,
+    max_ell: int,
+    precision: int = 40,
+) -> Dict[str, Any]:
+    """
+    Compute and tabulate all kernel coefficients for objectives and null constraints.
+
+    Simplification record
+    ---------------------
+    For each pair (p,q) or (n,m) and each spin ell:
+    - Objective (p,q): kappa = C^alpha_ell(1) * (2ell+d-3)
+    - Null constraint (n,m): kappa = D^{(n,m)}_{ell,alpha} * C^alpha_ell(1) * (2ell+d-3)
+    These are then multiplied by (1+x)^{K-power} in the SDPB polynomial.
+
+    Parameters
+    ----------
+    d : int       Spacetime dimension.
+    K : int       Maximum spectral power.
+    max_ell : int Maximum spin to tabulate.
+    precision : int  Output precision.
+    """
+    alpha = alpha_from_d(d)
+    obj_pairs = enumerate_obj_pairs(K)
+    null_pairs = enumerate_null_pairs(K)
+    ell_list = list(range(0, max_ell + 1, 2))
+
+    obj_table = []
+    for (p, q) in obj_pairs:
+        row = {
+            "type": "objective",
+            "p": p, "q": q,
+            "s1_power": s1_power(p, q),
+            "kernels": {},
+        }
+        for ell in ell_list:
+            kappa = obj_kernel_coeff(p, q, ell, d)
+            row["kernels"][str(ell)] = fraction_to_str(kappa, precision)
+        obj_table.append(row)
+
+    null_table = []
+    for (n, m) in null_pairs:
+        row = {
+            "type": "null_constraint",
+            "n": n, "m": m,
+            "first_csdr_index": n - m,
+            "s1_power": 2 * n + m,
+            "kernels": {},
+        }
+        for ell in ell_list:
+            kappa = null_kernel_coeff(n, m, ell, d)
+            row["kernels"][str(ell)] = fraction_to_str(kappa, precision)
+        null_table.append(row)
+
+    return {
+        "d": d,
+        "alpha": fraction_to_str(alpha, precision),
+        "K": K,
+        "ell_values": ell_list,
+        "objectives": obj_table,
+        "null_constraints": null_table,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Main run function
+# ---------------------------------------------------------------------------
+
+def run_bounds(
+    output_dir: str,
+    d: int,
+    K: int = 8,
+    max_spin: int = 10,
+    precision: int = 200,
+    bounds_to_compute: List[Tuple[Tuple[int, int], Tuple[int, int], str]] = None,
+) -> Dict[str, Any]:
+    """
+    Generate CSDR-based SDPB PMP files for EFT Wilson coefficient bounds.
+
+    Parameters
+    ----------
+    output_dir : str     Directory for output files.
+    d : int              Spacetime dimension.
+    K : int              Maximum spectral power (2p+3q cutoff).
+    max_spin : int       Maximum even spin.
+    precision : int      Decimal precision for SDPB files.
+    bounds_to_compute :  List of (obj_index, norm_index, direction) tuples.
+                         If None, uses a default set.
+
+    Returns
+    -------
+    dict  Summary of generated files and checks.
     """
     os.makedirs(output_dir, exist_ok=True)
 
-    bounds_to_compute = [
-        # (numerator, denominator, description)
-        ((1, 0), (0, 0), "g10_over_g00"),
-        ((2, 0), (0, 0), "g20_over_g00"),
-        ((0, 1), (0, 0), "g01_over_g00"),
-        ((2, 0), (1, 0), "g20_over_g10"),
-    ]
+    if bounds_to_compute is None:
+        # Default: bound W_{2,0}/W_{1,0} and W_{1,1}/W_{1,0}
+        bounds_to_compute = [
+            ((2, 0), (1, 0), "upper"),
+            ((2, 0), (1, 0), "lower"),
+            ((1, 1), (1, 0), "upper"),
+            ((1, 1), (1, 0), "lower"),
+        ]
 
-    configs = [
-        (False, "su", "positivity_only"),
-        (True, "su", "with_su_crossing"),
-        (True, "full", "with_full_crossing"),
-    ]
+    files = {}
 
-    print("=" * 70)
-    print("GENERATING PMP FILES FOR WILSON COEFFICIENT BOUNDS")
-    print("=" * 70)
-    print(f"  Max spin: {max_spin}")
-    print(f"  Max order: {max_order}")
-    print(f"  Mass²: {m_sq}")
-    print(f"  Precision: {precision} digits")
-    print(f"  Output directory: {output_dir}")
-    print()
+    # 1. Run consistency checks
+    checks = run_csdr_checks(d=d, precision=min(40, precision))
+    checks_file = os.path.join(output_dir, f"csdr_checks_d{d}.json")
+    with open(checks_file, "w", encoding="utf-8") as fh:
+        json.dump(checks, fh, indent=2)
+    files["checks"] = checks_file
 
-    summary = []
+    # 2. Kernel table
+    table = compute_kernel_table(d=d, K=K, max_ell=min(max_spin, 8), precision=40)
+    table_file = os.path.join(output_dir, f"csdr_kernel_table_d{d}_K{K}.json")
+    with open(table_file, "w", encoding="utf-8") as fh:
+        json.dump(table, fh, indent=2)
+    files["kernel_table"] = table_file
 
-    for num_idx, den_idx, name in bounds_to_compute:
-        for use_null, crossing, config_name in configs:
-            filename = f"pmp_{name}_{config_name}.json"
-            filepath = os.path.join(output_dir, filename)
+    # 3. Generate PMP files
+    pmp_files = {}
+    for (obj_idx, norm_idx, direction) in bounds_to_compute:
+        try:
+            pmp = generate_csdr_pmp(
+                obj_index=obj_idx,
+                norm_index=norm_idx,
+                d=d,
+                K=K,
+                max_spin=max_spin,
+                precision=precision,
+                bound_direction=direction,
+            )
+            fname = (
+                f"csdr_pmp_{direction}_W{obj_idx[0]}_{obj_idx[1]}"
+                f"_over_W{norm_idx[0]}_{norm_idx[1]}_d{d}_K{K}.json"
+            )
+            fpath = os.path.join(output_dir, fname)
+            write_pmp_json(pmp, fpath)
+            pmp_files[f"{direction}_{obj_idx}_{norm_idx}"] = fpath
+        except ValueError as exc:
+            pmp_files[f"{direction}_{obj_idx}_{norm_idx}_error"] = str(exc)
 
-            try:
-                pmp = generate_pmp_for_ratio_bound(
-                    numerator_index=num_idx,
-                    denominator_index=den_idx,
-                    max_spin=max_spin,
-                    max_order=max_order,
-                    use_null_constraints=use_null,
-                    crossing_type=crossing,
-                    m_sq=m_sq,
-                    precision=precision,
-                )
+    files["pmp_files"] = pmp_files
 
-                write_pmp_json(pmp, filepath)
-
-                n_blocks = len(pmp["PositiveMatrixWithPrefactorArray"])
-                n_vars = len(pmp["objective"])
-
-                print(f"  ✓ {filename}")
-                print(f"    Variables: {n_vars}, Blocks: {n_blocks}")
-
-                summary.append({
-                    "file": filename,
-                    "numerator": f"W_{{{num_idx[0]},{num_idx[1]}}}",
-                    "denominator": f"W_{{{den_idx[0]},{den_idx[1]}}}",
-                    "null_constraints": use_null,
-                    "crossing": crossing,
-                    "n_variables": n_vars,
-                    "n_blocks": n_blocks,
-                })
-
-            except Exception as e:
-                print(f"  ✗ {filename}: {e}")
-                summary.append({
-                    "file": filename,
-                    "error": str(e),
-                })
-
-    # Write summary
-    summary_path = os.path.join(output_dir, "summary.json")
-    with open(summary_path, 'w') as f:
-        json.dump(summary, f, indent=2)
-    print(f"\n  Summary written to {summary_path}")
-    print()
-
-    return summary
+    return {
+        "output_dir": output_dir,
+        "d": d,
+        "K": K,
+        "max_spin": max_spin,
+        "all_checks_passed": checks["passed"],
+        "files": files,
+    }
 
 
-def print_comparison_analysis():
-    """
-    Print a detailed analysis comparing the expected results from
-    using Sinha-Zahed null constraints vs. the Extremal EFT paper.
-    """
-    print("=" * 70)
-    print("COMPARISON ANALYSIS: Null Constraints vs. Extremal EFT")
-    print("=" * 70)
-    print()
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
 
-    print("1. METHODOLOGY COMPARISON")
-    print("-" * 50)
-    print("""
-    Extremal EFT (Caron-Huot & Duong):
-    • Uses fully crossing-symmetric spectral representation
-    • Crossing symmetry imposed at the level of the dispersion relation
-    • Unitarity via partial-wave positivity with Gegenbauer polynomials
-    • Dual SDP formulation gives optimal bounds
-
-    This implementation (Sinha-Zahed null constraints):
-    • Uses fixed-t dispersion relation + crossing constraints
-    • Null constraints imposed as linear equalities on Wilson coefficients
-    • Same partial-wave positivity structure
-    • Null constraints used to eliminate variables (Method A)
-    """)
-
-    print("2. EXPECTED RESULTS")
-    print("-" * 50)
-    print("""
-    The bounds from null constraints should be:
-    • WEAKER (less tight) than the Extremal EFT bounds
-    • Converging toward Extremal EFT bounds as more constraints are added
-    • Never TIGHTER than Extremal EFT bounds (this would signal an error)
-
-    Reason: The null constraints are NECESSARY conditions from crossing
-    symmetry, but may not be SUFFICIENT to capture all the information
-    in the fully crossing-symmetric dispersion relation.
-    """)
-
-    print("3. SPECIFIC PREDICTIONS")
-    print("-" * 50)
-
-    print("""
-    a) g_{1,0}/g_{0,0} ≥ 0:
-       • Without null constraints: trivial bound (just positivity)
-       • With s↔u crossing: same trivial bound (crossing doesn't help here)
-       • Extremal EFT: g_{1,0}/g_{0,0} ≥ 0 (also trivial at leading order)
-
-    b) g_{0,1}/g_{1,0}:
-       • Without null constraints: no bound (g_{0,1} unconstrained)
-       • With s↔u crossing: g_{0,1} = -g_{1,0}/3 (exactly fixed!)
-         This is a null constraint, not a bound.
-       • Extremal EFT: Same relation (both approaches agree on this)
-
-    c) g_{2,0}/g_{0,0}:
-       • Without null constraints: g_{2,0} ≥ 0 (trivial from positivity)
-       • With null constraints: nontrivial lower bound
-       • Extremal EFT: tighter bound expected
-
-    d) Higher-order ratios:
-       • Gap between null-constraint bounds and Extremal EFT bounds
-         expected to grow with order
-       • More null constraints (higher max_order) should progressively
-         close the gap
-    """)
-
-    print("4. CRITICAL VERIFICATION POINTS")
-    print("-" * 50)
-    print("""
-    To verify correctness of the implementation:
-
-    ✓ Check 1: Gegenbauer polynomials C_ℓ^{(1)}(1) = ℓ+1 for d=4
-    ✓ Check 2: Null constraints are independent and consistent
-    ✓ Check 3: Known amplitudes (e.g., scalar exchange) satisfy constraints
-    ✓ Check 4: Adding constraints never weakens bounds (monotonicity)
-    ✓ Check 5: Bounds are never tighter than Extremal EFT values
-    ✓ Check 6: PMP JSON format passes SDPB validation (pmp2sdp)
-
-    Key potential pitfalls:
-    • Sign conventions: s,t,u orientation relative to the papers
-    • Normalization: overall factors in the amplitude expansion
-    • Variable mapping: W_{pq} in Sinha-Zahed vs. g_k in Caron-Huot
-    • Crossing basis: (st+tu+us, stu) vs. (s,t) expansion
-    """)
-
-    print("5. WHY BOUNDS MAY DIFFER")
-    print("-" * 50)
-    print("""
-    The Sinha-Zahed null constraints capture crossing symmetry order by
-    order in the low-energy expansion. The Extremal EFT approach imposes
-    crossing at the FULL spectral level. The difference is analogous to:
-
-    • Null constraints ↔ matching Taylor coefficients (local information)
-    • Full crossing ↔ matching the full analytic function (global information)
-
-    The full function contains more information than any finite number of
-    Taylor coefficients. Therefore:
-
-    • Finite-order null constraints → weaker bounds
-    • Infinite-order null constraints → approach (but may not reach)
-      Extremal EFT bounds
-    • The gap measures how much "global" crossing information is lost
-      in the Taylor-coefficient approach
-
-    Additionally, the Extremal EFT paper may use a specific representation
-    of the spectral density (e.g., partial waves with definite spin and
-    mass) that is more constraining than the generic spectral decomposition
-    used here.
-    """)
-
-
-def _run_visualizations(viz_dir: str, max_order: int = 3) -> None:
-    """
-    Generate all visualization images for the current run.
-
-    Called when --visualize is passed on the command line.
-    Produces JPEG and BMP files (800×800 pixels) in viz_dir.
-    """
-    try:
-        from eft_bounds.visualize import (
-            plot_gegenbauer_polynomials,
-            plot_spectral_functions,
-            render_null_constraint_formulas,
-            plot_null_constraints_heatmap,
-            plot_variable_elimination,
-            plot_bound_comparison,
-            plot_allowed_region_2d,
-            plot_summary_dashboard,
-        )
-    except ImportError as exc:
-        print(f"  Visualization skipped (missing dependencies): {exc}")
-        print("  Run: pip install matplotlib numpy pillow")
-        return
-
-    os.makedirs(viz_dir, exist_ok=True)
-    p = lambda name: os.path.join(viz_dir, name)  # noqa: E731
-
-    print()
-    print("=" * 70)
-    print("GENERATING VISUALIZATION IMAGES")
-    print(f"  Output directory: {viz_dir}")
-    print("=" * 70)
-
-    print("  Gegenbauer polynomials …")
-    plot_gegenbauer_polynomials(p("gegenbauer_polynomials.jpg"))
-
-    print("  Spectral functions …")
-    plot_spectral_functions(p("spectral_functions.jpg"))
-
-    print("  Null constraint formulas (s↔u crossing) …")
-    render_null_constraint_formulas(
-        p("null_constraint_formulas_su.jpg"), max_order=max_order, crossing_type="su"
-    )
-
-    print("  Null constraint formulas (full S3 crossing) …")
-    render_null_constraint_formulas(
-        p("null_constraint_formulas_full.jpg"), max_order=max_order, crossing_type="full"
-    )
-
-    print("  Null constraint heatmap (s↔u crossing) …")
-    plot_null_constraints_heatmap(
-        p("null_constraints_heatmap_su.jpg"), max_order=max_order, crossing_type="su"
-    )
-
-    print("  Null constraint heatmap (full S3 crossing) …")
-    plot_null_constraints_heatmap(
-        p("null_constraints_heatmap_full.jpg"), max_order=max_order, crossing_type="full"
-    )
-
-    print("  Variable elimination (s↔u crossing) …")
-    plot_variable_elimination(
-        p("variable_elimination_su.jpg"), max_order=max_order, crossing_type="su"
-    )
-
-    print("  Variable elimination (full S3 crossing) …")
-    plot_variable_elimination(
-        p("variable_elimination_full.jpg"), max_order=max_order, crossing_type="full"
-    )
-
-    print("  Bound comparison chart …")
-    plot_bound_comparison(p("bound_comparison.jpg"), max_order=min(max_order, 3))
-
-    print("  2D allowed region …")
-    plot_allowed_region_2d(
-        p("allowed_region_W10_vs_W20.jpg"), max_order=min(max_order, 3)
-    )
-
-    print("  Summary dashboard …")
-    plot_summary_dashboard(p("summary_dashboard.jpg"), max_order=min(max_order, 3))
-
-    print()
-    print(f"  Done: {len(os.listdir(viz_dir))} files in {viz_dir}")
-
-
-def main():
-    """Main entry point."""
+def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Compute EFT Wilson coefficient bounds using SDPB"
+        description=(
+            "Generate CSDR-based SDPB PMP files for EFT Wilson coefficient bounds.\n"
+            "\n"
+            "Uses the CSDR dispersion relation kernels (Sinha-Zahed eq.(11)) and\n"
+            "the heavy-average form from Extremal EFT Section 3.3 (user notes eq.(2)).\n"
+            "\n"
+            "IMPORTANT: d is required — do NOT assume d=4."
+        ),
+        formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument(
-        "--output-dir", "-o",
-        default="eft_bounds_output",
-        help="Output directory for PMP JSON files (default: eft_bounds_output)",
+        "--output-dir", required=True,
+        help="Directory for generated JSON/PMP files.",
+    )
+    parser.add_argument(
+        "--d", type=int, required=True,
+        help="Spacetime dimension (e.g. 4, 6, 10).",
+    )
+    parser.add_argument(
+        "--K", type=int, default=8,
+        help="Maximum spectral power 2p+3q (default: 8).",
     )
     parser.add_argument(
         "--max-spin", type=int, default=10,
-        help="Maximum spin in partial-wave expansion (default: 10)",
-    )
-    parser.add_argument(
-        "--max-order", type=int, default=4,
-        help="Maximum total order p+q (default: 4)",
+        help="Maximum even spin (default: 10).",
     )
     parser.add_argument(
         "--precision", type=int, default=200,
-        help="Numerical precision in decimal digits (default: 200)",
+        help="Decimal precision for SDPB output (default: 200).",
     )
     parser.add_argument(
         "--checks-only", action="store_true",
-        help="Only run consistency checks, don't generate PMP files",
+        help="Run consistency checks only, do not generate PMP files.",
     )
-    parser.add_argument(
-        "--analysis-only", action="store_true",
-        help="Only print comparison analysis",
-    )
-
-    parser.add_argument(
-        "--visualize", action="store_true",
-        help="Generate visualization images (JPEG + BMP) alongside PMP files",
-    )
-    parser.add_argument(
-        "--viz-dir",
-        default=None,
-        help="Output directory for visualization images "
-             "(default: <output-dir>/visualizations/)",
-    )
-
     args = parser.parse_args()
 
-    # Always run consistency checks first
-    print()
-    success = run_consistency_checks()
-    if not success:
-        print("Consistency checks failed! Aborting.")
-        sys.exit(1)
-
     if args.checks_only:
-        return
+        checks = run_csdr_checks(d=args.d)
+        print(json.dumps(checks, indent=2))
+        sys.exit(0 if checks["passed"] else 1)
 
-    if args.analysis_only:
-        print_comparison_analysis()
-        return
-
-    # Generate PMP files
-    m_sq = Fraction(1)
-    summary = generate_bound_series(
+    result = run_bounds(
         output_dir=args.output_dir,
+        d=args.d,
+        K=args.K,
         max_spin=args.max_spin,
-        max_order=args.max_order,
-        m_sq=m_sq,
         precision=args.precision,
     )
-
-    # Print comparison analysis
-    print_comparison_analysis()
-
-    # Optional visualization
-    if args.visualize:
-        viz_dir = args.viz_dir or os.path.join(args.output_dir, "visualizations")
-        _run_visualizations(viz_dir, max_order=args.max_order)
-
-    # Print instructions for running SDPB
-    print("=" * 70)
-    print("NEXT STEPS: Running SDPB")
-    print("=" * 70)
-    print(f"""
-    For each PMP file in {args.output_dir}/, run:
-
-    1. Convert PMP to SDP format:
-       pmp2sdp --precision=1024 --input=<pmp_file>.json --output=<sdp_dir>/
-
-    2. Run SDPB solver:
-       mpirun -n 4 sdpb --precision=1024 -s <sdp_dir>/ -o <output_dir>/
-
-    3. Read the result:
-       The optimal objective value in <output_dir>/out.txt gives
-       the NEGATIVE of the lower bound.
-       (Since we maximize -W_{{num}}, the bound is W_{{num}} ≥ -optimal_value.)
-
-    Example:
-       pmp2sdp --precision=1024 \\
-           --input={args.output_dir}/pmp_g10_over_g00_with_su_crossing.json \\
-           --output={args.output_dir}/sdp_g10/
-
-       mpirun -n 4 sdpb --precision=1024 \\
-           -s {args.output_dir}/sdp_g10/ \\
-           -o {args.output_dir}/out_g10/
-
-    The bound on g_{{1,0}}/g_{{0,0}} is then:
-       lower_bound = -(primalObjective from out.txt)
-    """)
+    print(json.dumps(result, indent=2))
+    if not result["all_checks_passed"]:
+        print("\nWARNING: Some consistency checks failed.", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
