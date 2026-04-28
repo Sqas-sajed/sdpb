@@ -124,7 +124,9 @@ def _csdr_spin_block(
         return None
 
     e_inv = _compute_e_inverse(precision)
-    prefactor = {
+    # SDPB PMP format uses "DampedRational" key (not "prefactor").
+    # See test/data/end-to-end_tests/1d/input/pmp.json for the canonical example.
+    damped_rational = {
         "base": e_inv,
         "constant": "1",
         "poles": ["-1"] * K,
@@ -136,7 +138,7 @@ def _csdr_spin_block(
     ]]
 
     return {
-        "prefactor": prefactor,
+        "DampedRational": damped_rational,
         "polynomials": [poly_json],
     }
 
@@ -486,7 +488,7 @@ def generate_pmp_for_linear_functional_bound(
             [fraction_to_str(c, precision) for c in pv]
             for pv in pvecs
         ]]
-        return {"prefactor": pf, "polynomials": [pj]}
+        return {"DampedRational": pf, "polynomials": [pj]}
 
     pmp_array = []
     for ell in range(0, max_spin + 1, 2):

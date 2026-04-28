@@ -12,51 +12,66 @@ Convention
                    (2*ell + 2*alpha) = (2*ell + d - 3) matches eq.(1))
 
   S1, S2, S3 = Mandelstam variables shifted so S1+S2+S3 = 0.
+    Concretely: S_i = (Mandelstam variable)_i - mu/3,  sum S_i = 0.
   x = -(S1*S2 + S2*S3 + S3*S1),  y = -S1*S2*S3.
   Amplitude: M = sum_{p,q>=0} W_{p,q} x^p y^q
 
   W_{n-m,m}: first index = n-m, second index = m.
-  - n > m  (first index > 0): EFT objectives.  Kernel from forward scattering.
-  - n = m  (first index = 0): EFT objective W_{0,m}. Not covered by eq.(11).
+  - n > m  (first index > 0): EFT objectives.
+  - n = m  (first index = 0): EFT objective W_{0,m}.
   - n < m  (first index < 0): CSDR null constraints (W = 0). Kernel from eq.(11).
 
-User notes eq.(2) [valid for null constraints m > n >= 1]:
+User notes eq.(2) [derived for null constraints m > n >= 1]:
 
-  W_{n-m,m} = < D^{(n,m)}_{ell,alpha} * C^{(alpha)}_ell(1) * (2*ell+d-3)
-               / (n^{(d)}_ell * s1^{2n+m}) >
+  W_{n-m,m} = < D^{(n,m)}_{ell,alpha} / n^{(d)}_ell
+                 * C^{(alpha)}_ell(1) * (2*ell+d-3)
+                 / s1^{2n+m} >
 
-  where <F> = sum_{ell even} n^{(d)}_ell * int_{delta0}^inf ds1/s1
-              * s1^{4-d}/pi * rho_ell(s1) * F(s1,ell)
+  where the heavy average is:
+    <F> = sum_{ell even} n^{(d)}_ell * int_{delta0}^inf ds1/s1
+          * s1^{4-d}/pi * rho_ell(s1) * F(s1,ell)
 
   and   n^{(d)}_J = (4*pi)^{d/2} * (d+2J-3) * Gamma(d+J-3)
                     / (pi * Gamma((d-2)/2) * Gamma(J+1))
 
-  Note: n^{(d)}_ell appears in both the measure and the integrand and cancels,
-  so SDPB blocks do NOT need to include it.
+WHY n^{(d)}_ell CANCELS IN SDPB BLOCKS
+----------------------------------------
+Expanding the heavy average explicitly:
 
-For objectives (n >= m, forward scattering approximation):
-  v_{p,q}(s1,ell) = C^{(alpha)}_ell(1) * (2*ell+d-3) / s1^{2p+3q}
+  <F> = sum_{ell even} n^{(d)}_ell * int ρ_ell * F(s1,ell) * (measure)
+      = sum_{ell even} n^{(d)}_ell * int ρ_ell
+          * [D^{(n,m)} / n^{(d)}_ell * C_ell(1) * (2ell+d-3) / s1^{2n+m}]
+          * (measure)
+      = sum_{ell even} int ρ_ell
+          * D^{(n,m)} * C_ell(1) * (2ell+d-3) / s1^{2n+m}
+          * (measure)
 
-  (This is the leading forward-scattering contribution; the exact CSDR
-   objective kernel is more complicated but reduces to this formula in the
-   forward limit.  Using this approximation gives a well-posed SDPB problem
-   and correctly incorporates the null constraints.)
+So n^{(d)}_ell cancels between the prefactor and the denominator of F.
 
-Simplification record
----------------------
-1. Start from CSDR eq.(4): W_{n-m,m} = int ds1/s1 Phi(s1) sum_ell a_ell B^{(n,m)}_ell(s1)
-2. Substitute Phi(s1) ~ s1^{(4-d)/2} (large s1 limit) and partial-wave
-   normalization to match Extremal EFT heavy-average measure.
-3. Use large-s1 approximation B^{(n,m)}_ell(s1) ~ C^{(alpha)}_ell(1)/pi * D^{(n,m)}_ell / s1^{2n+m}
-   (CSDR eq.(11), valid for m > n >= 1).
-4. Identify integrand * n^{(d)}_ell as the heavy-average kernel.
-5. Result: user notes eq.(2).
+For SDPB, we need: P^{(ell)}(x) = Σ_k y_k * (spectral contribution of z_k at spin ell) >= 0.
+Since n^{(d)}_ell > 0, the condition ⟨F⟩ ≥ 0 for all ρ_ell ≥ 0 is equivalent to:
+  D^{(n,m)} * C_ell(1) * (2ell+d-3) * (polynomial in s1) ≥ 0
+for all even ell and all s1 ≥ delta0.
+This is precisely what SDPB enforces.  The factor n^{(d)}_ell is absorbed into
+the measure weights and is positive, so it does NOT change the feasibility problem.
+Therefore, SDPB polynomial blocks do NOT need to include n^{(d)}_ell explicitly.
 
-For objectives (n >= m >= 0, n >= 1):
-6. D^{(n,m)} from eq.(11) is zero (empty sum) when m <= n.
-7. We use the forward-scattering spectral function C^{(alpha)}_ell(1)*(2ell+d-3)
-   as the objective kernel; this is the leading contribution from each partial
-   wave to the Wilson coefficient (positive-definite, consistent with unitarity).
+OBJECTIVE D FORMULA (TODO — formula not yet provided by user)
+--------------------------------------------------------------
+For objectives (n >= m, first CSDR index n-m >= 0), the CSDR paper (Sinha-Zahed)
+uses a different kernel formula from eq.(11), which applies only to null constraints
+(m > n).  The user has indicated the correct objective formula in their notes but
+the explicit formula was not yet transmitted.
+
+Current placeholder for objectives:
+  kappa^{obj}_{p,q,ell} = C^{(alpha)}_ell(1) * (2*ell+d-3)
+
+This is the leading forward-scattering contribution (positive-definite).
+Once the user provides the correct formula, replace obj_kernel_coeff below.
+
+Note on CSDR vs Extremal EFT:
+The forms of null constraints and objectives in CSDR may or may not differ from
+the fixed-t dispersion relation result.  Do not assume they differ; verify numerically.
 """
 
 from fractions import Fraction
