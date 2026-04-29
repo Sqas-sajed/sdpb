@@ -4,6 +4,7 @@
 #include "pmp_read/PMP_File_Parse_Result.hxx"
 #include "sdpb_util/json/Abstract_Json_Object_Parser.hxx"
 #include "sdpb_util/json/Json_Float_Parser.hxx"
+#include "sdpb_util/json/Json_Skip_Element_Parser.hxx"
 #include "sdpb_util/json/Json_Vector_Parser_With_Skip.hxx"
 
 class Json_PMP_Parser final
@@ -24,6 +25,7 @@ private:
   BigFloat_Vector_Parser objective_parser;
   BigFloat_Vector_Parser normalization_parser;
   Json_Positive_Matrix_With_Prefactor_Array_Parser matrices_parser;
+  Json_Skip_Element_Parser skip_element_parser{};
 
 public:
   Json_PMP_Parser(

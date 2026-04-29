@@ -49,7 +49,8 @@ Json_PMP_Parser::element_parser(const std::string &key)
     return normalization_parser;
   if(key == "PositiveMatrixWithPrefactorArray")
     return matrices_parser;
-  RUNTIME_ERROR("Json_PMP_Parser: Unexpected key=", key);
+  PRINT_WARNING("Json_PMP_Parser: Unexpected key=", key, ", skipping");
+  return skip_element_parser;
 }
 void Json_PMP_Parser::clear_result()
 {
