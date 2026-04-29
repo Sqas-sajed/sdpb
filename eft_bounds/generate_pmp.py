@@ -159,10 +159,13 @@ Decision variable notation:
     print(f"  Decision variables: {meta['n_decision_variables']} "
           f"({meta['n_obj_pairs']} objectives, {meta['n_null_pairs']} null constraints)")
     print(f"  Spin blocks:        {meta['n_spin_blocks']}")
-    print(f"\nNext steps:")
-    print(f"  1. Convert to SDPB binary: pmp2sdp --input {args.output} --output sdp/")
-    print(f"  2. Run solver:             sdpb --sdpDir sdp/ --outDir out/")
-    print(f"  3. Read result from:       out/out.txt  (look for 'primalObjective')")
+    sdp_dir = "sdp_" + args.output.replace(".json", "").replace("/", "_")
+    print(f"\nNext steps (Docker):")
+    print(f"  1. Convert to SDPB binary:")
+    print(f"       docker run --rm --platform linux/amd64 -v \"${{PWD}}:/usr/local/share/sdpb\" bootstrapcollaboration/sdpb:master mpirun --allow-run-as-root -n 4 pmp2sdp --precision 1024 -i /usr/local/share/sdpb/{args.output} -o /usr/local/share/sdpb/{sdp_dir}")
+    print(f"  2. Run solver:")
+    print(f"       docker run --rm --platform linux/amd64 -v \"${{PWD}}:/usr/local/share/sdpb\" bootstrapcollaboration/sdpb:master mpirun --allow-run-as-root -n 4 sdpb --precision=1024 -s /usr/local/share/sdpb/{sdp_dir} -o /usr/local/share/sdpb/out_{sdp_dir} -c /usr/local/share/sdpb/out_{sdp_dir}/ck")
+    print(f"  3. Read result from:  out_{sdp_dir}/out.txt  (look for 'primalObjective')")
 
 
 if __name__ == "__main__":

@@ -42,23 +42,29 @@ A "plot of allowed (g̃₃, g̃₄)" means the 2D region:
 
 Download from https://www.docker.com/products/docker-desktop and install.
 After installation, open "Docker Desktop" and wait for it to start (green
-icon in the taskbar).
+icon in the taskbar).  Make sure the **"Use WSL 2 based engine"** setting is
+enabled (recommended, default on most Windows installs).
 
 ### Step 2: Pull the official SDPB Docker image
 
 Open a **PowerShell** window and run:
 
 ```powershell
-docker pull bootstrapcollaboration/sdpb:master
+docker pull --platform linux/amd64 bootstrapcollaboration/sdpb:master
 ```
 
-This downloads the official SDPB image (see [`docs/Docker.md`](../docs/Docker.md)).
-You can also use a specific release tag, e.g. `bootstrapcollaboration/sdpb:3.1.0`.
+The `--platform linux/amd64` flag tells Docker to pull the x86-64 image
+regardless of the machine architecture.  This prevents the
+`exec format error` that occurs when Docker tries to run the wrong binary
+format.  You can also use a specific release tag, e.g.
+`bootstrapcollaboration/sdpb:3.1.0`.
 
 Test it works:
+
 ```powershell
-docker run --rm bootstrapcollaboration/sdpb:master sdpb --help
+docker run --rm --platform linux/amd64 bootstrapcollaboration/sdpb:master sdpb --help
 ```
+
 You should see the SDPB option list.
 
 ### Step 3: Get Python (if you don't have it)
@@ -109,13 +115,13 @@ Generate an upper-bound PMP file for g̃₃ = W_{0,1}/W_{1,0}:
 python generate_pmp.py --obj 1 1 --norm 1 0 --d 4 --K 4 --max-spin 10 --delta0 40 --direction upper --output upper_g3.json
 ```
 
-This creates `upper_g3.json` — the PMP input file ready for SDPB.
+This creates `upper_g3.json` and prints **Next steps** with the exact Docker
+commands ready to copy and paste.
 
 > The `--precision` flag in `generate_pmp.py` is **decimal digits** of output
 > coefficients (default 200).  This is different from SDPB's `--precision`,
 > which is in **bits** (1024 bits ≈ 308 decimal digits).  They do not need
-> to match exactly — SDPB's precision must be large enough to handle the
-> coefficient values.
+> to match exactly.
 
 ---
 
@@ -126,49 +132,43 @@ The workflow has two stages (as described in [`sdpbUsage.md`](../sdpbUsage.md)):
 1. **`pmp2sdp`**: convert the JSON PMP file into SDPB's internal binary SDP format.
 2. **`sdpb`**: run the semidefinite program solver on the SDP.
 
-Docker mounts your local folder into the container at the path
-`/usr/local/share/sdpb/` (see [`docs/Docker.md`](../docs/Docker.md)).
+Docker mounts your local folder into the container at `/usr/local/share/sdpb/`
+(see [`docs/Docker.md`](../docs/Docker.md)).
 
-Suppose your PMP files are in `C:\sdpb_eft\`.
+**Important:** always include `--platform linux/amd64` in every `docker run`
+command.  Without it, Docker may try to run the wrong binary format and fail
+with `exec format error`.
+
+All commands below are **single-line** — copy each as one line.
 
 ### Step 1: Convert PMP → SDP with `pmp2sdp`
 
 ```powershell
-docker run --rm `
-    -v "C:/sdpb_eft/:/usr/local/share/sdpb/" `
-    bootstrapcollaboration/sdpb:master `
-    mpirun --allow-run-as-root -n 4 pmp2sdp --precision 1024 `
-        -i /usr/local/share/sdpb/upper_g3.json `
-        -o /usr/local/share/sdpb/sdp_upper_g3
+docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:master mpirun --allow-run-as-root -n 4 pmp2sdp --precision 1024 -i /usr/local/share/sdpb/upper_g3.json -o /usr/local/share/sdpb/sdp_upper_g3
 ```
 
-- `-v "C:/sdpb_eft/:/usr/local/share/sdpb/"` — mounts your folder.
-- `mpirun --allow-run-as-root -n 4` — runs with 4 CPU cores inside Docker.
+Options explained:
+- `--platform linux/amd64` — use the x86-64 image (required on ARM machines).
+- `-v "C:/sdpb_eft/:/usr/local/share/sdpb/"` — mount your folder.
+- `mpirun --allow-run-as-root -n 4` — run with 4 CPU cores inside Docker.
   Change `4` to match the number of cores on your machine.
-- `--precision 1024` — working precision in **bits** (1024 is a safe default).
-- `-i …` — input JSON file (inside the container's mounted path).
+- `--precision 1024` — working precision in **bits**.
+- `-i …` — input JSON file path inside the container.
 - `-o …` — output directory for the SDP binary files.
 
-This creates `C:\sdpb_eft\sdp_upper_g3\` containing `control.json`,
+This creates `C:\sdpb_eft\sdp_upper_g3\` with `control.json`,
 `objectives.json`, and binary block files.
 
 ### Step 2: Run SDPB
 
 ```powershell
-docker run --rm `
-    -v "C:/sdpb_eft/:/usr/local/share/sdpb/" `
-    bootstrapcollaboration/sdpb:master `
-    mpirun --allow-run-as-root -n 4 sdpb --precision=1024 `
-        -s /usr/local/share/sdpb/sdp_upper_g3 `
-        -o /usr/local/share/sdpb/out_upper_g3 `
-        -c /usr/local/share/sdpb/out_upper_g3/ck
+docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:master mpirun --allow-run-as-root -n 4 sdpb --precision=1024 -s /usr/local/share/sdpb/sdp_upper_g3 -o /usr/local/share/sdpb/out_upper_g3 -c /usr/local/share/sdpb/out_upper_g3/ck
 ```
 
+Options explained:
 - `-s …` — path to the SDP directory produced by `pmp2sdp`.
 - `-o …` — output directory for the solver result.
-- `-c …` — checkpoint directory (used to resume interrupted runs).
-
-This may take a few minutes. When complete, `C:\sdpb_eft\out_upper_g3\` is created.
+- `-c …` — checkpoint directory (allows resuming interrupted runs).
 
 ### Step 3: Read the result
 
@@ -176,7 +176,7 @@ This may take a few minutes. When complete, `C:\sdpb_eft\out_upper_g3\` is creat
 type C:\sdpb_eft\out_upper_g3\out.txt
 ```
 
-The output looks like (see the example in [`sdpbUsage.md`](../sdpbUsage.md)):
+The output looks like (see [`sdpbUsage.md`](../sdpbUsage.md) for details):
 ```
 terminateReason = "found primal-dual optimal solution";
 primalObjective = 1.23456...;
@@ -188,90 +188,73 @@ Solver runtime  = 42;
 ```
 
 The **upper bound** on g̃₃ is the value of `primalObjective`.
-A `terminateReason` of `"found primal-dual optimal solution"` means the
-solver converged. If it says `"dual infeasible"` the problem may be
-infeasible (no allowed region exists for those parameters).
+A `terminateReason` of `"found primal-dual optimal solution"` means success.
 
-> **Note on newly created files:** Files written by Docker may be owned by
-> `root`.  If you cannot delete them in Windows Explorer, run:
-> `docker run --rm -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:master rm -rf /usr/local/share/sdpb/out_upper_g3`
+> **Note on root-owned files:** Files written by Docker may be owned by
+> root and cannot be deleted in Windows Explorer.  Delete them with:
+> `docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:master rm -rf /usr/local/share/sdpb/out_upper_g3`
 
 ---
 
 ## Produce a 2D allowed-region plot of (g̃₃, g̃₄)
 
-The allowed region is a convex set in the (g̃₃, g̃₄) plane.
-
 ### Step 1: Generate 4 PMP files
 
-Run these four commands to get the extreme bounds:
-
 ```powershell
-# Upper bound on g̃₃ = W_{0,1}/W_{1,0}:
-python generate_pmp.py --obj 1 1 --norm 1 0 --d 4 --K 4 --max-spin 10 --delta0 40 --direction upper -o ub_g3.json
-
-# Lower bound on g̃₃:
-python generate_pmp.py --obj 1 1 --norm 1 0 --d 4 --K 4 --max-spin 10 --delta0 40 --direction lower -o lb_g3.json
-
-# Upper bound on g̃₄ = W_{2,0}/W_{1,0}:
-python generate_pmp.py --obj 2 0 --norm 1 0 --d 4 --K 4 --max-spin 10 --delta0 40 --direction upper -o ub_g4.json
-
-# Lower bound on g̃₄:
-python generate_pmp.py --obj 2 0 --norm 1 0 --d 4 --K 4 --max-spin 10 --delta0 40 --direction lower -o lb_g4.json
+python generate_pmp.py --obj 1 1 --norm 1 0 --d 4 --K 4 --max-spin 10 --delta0 40 --direction upper --output ub_g3.json
+python generate_pmp.py --obj 1 1 --norm 1 0 --d 4 --K 4 --max-spin 10 --delta0 40 --direction lower --output lb_g3.json
+python generate_pmp.py --obj 2 0 --norm 1 0 --d 4 --K 4 --max-spin 10 --delta0 40 --direction upper --output ub_g4.json
+python generate_pmp.py --obj 2 0 --norm 1 0 --d 4 --K 4 --max-spin 10 --delta0 40 --direction lower --output lb_g4.json
 ```
+
+Each command prints the exact `docker run` commands for that file.
 
 ### Step 2: Run pmp2sdp + sdpb for each file
 
-Repeat the two Docker commands from the previous section for each of the 4
-JSON files.  Use different directory names each time, e.g.
-`sdp_ub_g3`, `sdp_lb_g3`, etc.  Example for `lb_g3.json`:
+Use the printed commands, or adapt this pattern (example for `lb_g3.json`):
 
 ```powershell
-docker run --rm -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:master mpirun --allow-run-as-root -n 4 pmp2sdp --precision 1024 -i /usr/local/share/sdpb/lb_g3.json -o /usr/local/share/sdpb/sdp_lb_g3
+docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:master mpirun --allow-run-as-root -n 4 pmp2sdp --precision 1024 -i /usr/local/share/sdpb/lb_g3.json -o /usr/local/share/sdpb/sdp_lb_g3
 
-docker run --rm -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:master mpirun --allow-run-as-root -n 4 sdpb --precision=1024 -s /usr/local/share/sdpb/sdp_lb_g3 -o /usr/local/share/sdpb/out_lb_g3 -c /usr/local/share/sdpb/out_lb_g3/ck
+docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:master mpirun --allow-run-as-root -n 4 sdpb --precision=1024 -s /usr/local/share/sdpb/sdp_lb_g3 -o /usr/local/share/sdpb/out_lb_g3 -c /usr/local/share/sdpb/out_lb_g3/ck
 ```
 
-### Step 3: Collect the results
+### Step 3: Collect results
 
-Open each `out.txt` and record the `primalObjective` value:
+Open each `out.txt` and record `primalObjective`:
 
-| File | What it is | Value (example) |
-|------|-----------|-----------------|
-| `out_ub_g3/out.txt` | upper bound g̃₃ | `3.12` |
-| `out_lb_g3/out.txt` | lower bound −g̃₃ | `2.45` → g̃₃ ≥ −2.45 |
-| `out_ub_g4/out.txt` | upper bound g̃₄ | `4.50` |
-| `out_lb_g4/out.txt` | lower bound −g̃₄ | `1.20` → g̃₄ ≥ −1.20 |
+| File | Bound on | primalObjective = |
+|------|---------|-----------------|
+| `out_ub_g3/out.txt` | upper g̃₃ | e.g. 3.12 |
+| `out_lb_g3/out.txt` | −(lower g̃₃) | e.g. 2.45 → g̃₃ ≥ −2.45 |
+| `out_ub_g4/out.txt` | upper g̃₄ | e.g. 4.50 |
+| `out_lb_g4/out.txt` | −(lower g̃₄) | e.g. 1.20 → g̃₄ ≥ −1.20 |
 
-> **For lower bounds:** when `--direction lower` is used, `generate_pmp.py`
-> negates the objective.  The bound on g̃ is therefore
-> **negative** of `primalObjective`.  For example, if `primalObjective = 2.45`
-> in the lower-bound run, the true lower bound is g̃₃ ≥ −2.45.
+> For `--direction lower`, `generate_pmp.py` negates the objective.
+> The true lower bound is **negative** of `primalObjective`.
 
 ### Step 4: Plot in Python
 
-Install matplotlib (open PowerShell):
+Install matplotlib:
 ```powershell
 pip install matplotlib
 ```
 
-Create a file `plot_region.py` in `C:\sdpb_eft\`:
+Create `plot_region.py` in `C:\sdpb_eft\`:
 
 ```python
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
-# ── Replace these values with what you read from out.txt ──
+# Replace with values from your out.txt files
 ub_g3  =  3.12   # primalObjective from out_ub_g3/out.txt
 lb_g3  = -2.45   # NEGATIVE of primalObjective from out_lb_g3/out.txt
-ub_g4  =  4.50   # primalObjective from out_ub_g4/out.txt
-lb_g4  = -1.20   # NEGATIVE of primalObjective from out_lb_g4/out.txt
+ub_g4  =  4.50
+lb_g4  = -1.20
 
 fig, ax = plt.subplots(figsize=(6, 5))
 rect = patches.Rectangle(
-    (lb_g3, lb_g4),
-    ub_g3 - lb_g3,
-    ub_g4 - lb_g4,
+    (lb_g3, lb_g4), ub_g3 - lb_g3, ub_g4 - lb_g4,
     linewidth=2, edgecolor='blue', facecolor='lightblue', alpha=0.5,
     label='Allowed region (bounding box)'
 )
@@ -293,23 +276,6 @@ Run it:
 python plot_region.py
 ```
 
-This produces a rectangular **bounding box** of the allowed region.  For a
-more accurate boundary (convex hull), you would run SDPB for many more
-directions and connect the boundary points — the same approach as Figure 8
-in "Extremal EFT".
-
----
-
-## One-line combined commands (copy-paste ready)
-
-These combine pmp2sdp and sdpb on a single line (no line continuation):
-
-```powershell
-docker run --rm -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:master mpirun --allow-run-as-root -n 4 pmp2sdp --precision 1024 -i /usr/local/share/sdpb/upper_g3.json -o /usr/local/share/sdpb/sdp_upper_g3
-
-docker run --rm -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:master mpirun --allow-run-as-root -n 4 sdpb --precision=1024 -s /usr/local/share/sdpb/sdp_upper_g3 -o /usr/local/share/sdpb/out_upper_g3 -c /usr/local/share/sdpb/out_upper_g3/ck
-```
-
 ---
 
 ## Understanding the parameters
@@ -329,15 +295,15 @@ docker run --rm -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/
 
 ### Parameters for `pmp2sdp` and `sdpb`
 
-These take `--precision` in **bits** (not decimal digits):
+These take `--precision` in **bits**:
 
 | `--precision` bits | Decimal digits | Recommendation |
 |--------------------|----------------|----------------|
-| 512  | ~154 | Minimum safe for 50-digit PMP input |
-| 1024 | ~308 | Safe default for 200-digit PMP input |
-| 2048 | ~616 | For high-precision production runs |
+| 512  | ~154 | Quick tests |
+| 1024 | ~308 | Safe default (matches 200-digit PMP input) |
+| 2048 | ~616 | High-precision production runs |
 
-Use `sdpb --help` (via Docker) to see all available options.
+Run `docker run --rm --platform linux/amd64 bootstrapcollaboration/sdpb:master sdpb --help` to see all available `sdpb` options.
 
 ---
 
@@ -356,28 +322,31 @@ where D is spin-dependent and α = (d−3)/2.
 
 ## Troubleshooting
 
+**`exec /usr/bin/mpirun: exec format error`**
+→ Your machine's CPU architecture does not match the Docker image.
+  Add `--platform linux/amd64` to every `docker run` command.  Also re-pull
+  the image with `docker pull --platform linux/amd64 bootstrapcollaboration/sdpb:master`.
+
 **`terminateReason = "dual infeasible"`**
-→ The SDP may be infeasible.  Try increasing `--K` or `--max-spin`.
+→ The SDP is infeasible — no solution exists with those parameters.
+  Try increasing `--K` or `--max-spin`.
 
 **The bound value looks wrong / very large**
 → Check `--delta0` matches your physical setup; changing δ₀ rescales W_{n,m}.
-→ Also check `--direction`: lower-bound runs negate the objective.
+→ For lower bounds, the true bound = **negative** of `primalObjective`.
 
-**Docker command fails with `path not found`**
-→ Use forward slashes in the `-v` flag path on Windows:
-   `-v "C:/sdpb_eft/:/usr/local/share/sdpb/"` (not backslashes).
+**Docker command fails with "path not found"**
+→ Use forward slashes in the `-v` flag on Windows:
+  `-v "C:/sdpb_eft/:/usr/local/share/sdpb/"` (not backslashes).
 
-**Files created by Docker cannot be deleted**
-→ They are owned by root inside the container. Delete them with:
-   `docker run --rm -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:master rm -rf /usr/local/share/sdpb/sdp_upper_g3`
+**`'A was not numerically HPD'` error**
+→ Increase `--precision` in `pmp2sdp` and `sdpb` (e.g. try `2048` instead
+  of `1024`), as described in [`sdpbUsage.md`](../sdpbUsage.md).
 
-**`'A was not numerically HPD'` error from SDPB**
-→ Increase `--precision` in `pmp2sdp` and `sdpb` (e.g. try 2048 instead of 1024),
-   as described in [`sdpbUsage.md`](../sdpbUsage.md).
-
-**Out-of-memory error**
-→ Reduce parallel cores (`-n 2` instead of `-n 4`) or add
-  `--maxSharedMemory=2G` to the `sdpb` command.
+**Out-of-memory error (`std::bad_alloc`)**
+→ Reduce the number of MPI cores (use `-n 2` instead of `-n 4`) or add
+  `--maxSharedMemory=2G` to the `sdpb` command, as described in
+  [`sdpbUsage.md`](../sdpbUsage.md).
 
 ---
 
@@ -393,13 +362,12 @@ The `eft_bounds/examples/` directory contains pre-generated PMP files
 | `upper_W20_over_W10_K4_d4_delta40.json` | Upper bound on g̃₄ = W_{2,0}/W_{1,0} |
 | `lower_W20_over_W10_K4_d4_delta40.json` | Lower bound on g̃₄ |
 
-**To use them directly** (no Python needed), copy the `examples/` folder to
-`C:\sdpb_eft\examples\` and run (example for upper g̃₃):
+**To use them directly** (copy `examples/` to `C:\sdpb_eft\examples\`):
 
 ```powershell
-docker run --rm -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:master mpirun --allow-run-as-root -n 4 pmp2sdp --precision 1024 -i /usr/local/share/sdpb/examples/upper_W01_over_W10_K4_d4_delta40.json -o /usr/local/share/sdpb/sdp_ub_g3
+docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:master mpirun --allow-run-as-root -n 4 pmp2sdp --precision 1024 -i /usr/local/share/sdpb/examples/upper_W01_over_W10_K4_d4_delta40.json -o /usr/local/share/sdpb/sdp_ub_g3
 
-docker run --rm -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:master mpirun --allow-run-as-root -n 4 sdpb --precision=1024 -s /usr/local/share/sdpb/sdp_ub_g3 -o /usr/local/share/sdpb/out_ub_g3 -c /usr/local/share/sdpb/out_ub_g3/ck
+docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:master mpirun --allow-run-as-root -n 4 sdpb --precision=1024 -s /usr/local/share/sdpb/sdp_ub_g3 -o /usr/local/share/sdpb/out_ub_g3 -c /usr/local/share/sdpb/out_ub_g3/ck
 
 type C:\sdpb_eft\out_ub_g3\out.txt
 ```
