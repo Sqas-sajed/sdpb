@@ -276,9 +276,14 @@ def generate_csdr_pmp(
 
 
 def write_pmp_json(pmp: Dict[str, Any], filepath: str) -> None:
-    """Write PMP JSON to file."""
+    """Write PMP JSON to file, excluding any metadata keys (prefixed with '_').
+
+    Keys starting with '_' (e.g. '_metadata') are stripped before writing so
+    that pmp2sdp does not reject them with "Unexpected key=_metadata".
+    """
+    pmp_out = {k: v for k, v in pmp.items() if not k.startswith("_")}
     with open(filepath, "w") as fh:
-        json.dump(pmp, fh, indent=2)
+        json.dump(pmp_out, fh, indent=2)
 
 
 def generate_pmp_for_ratio_bound(
