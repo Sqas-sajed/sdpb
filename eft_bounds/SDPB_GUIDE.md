@@ -45,7 +45,28 @@ After installation, open "Docker Desktop" and wait for it to start (green
 icon in the taskbar).  Make sure the **"Use WSL 2 based engine"** setting is
 enabled (recommended, default on most Windows installs).
 
-### Step 2: Pull the official SDPB Docker image
+### Step 2: Switch Docker Desktop to Linux containers mode
+
+The SDPB image is a **Linux** container.  Docker Desktop on Windows can run
+either Linux containers or Windows containers, but **not both at the same
+time**.  It must be in **Linux containers mode** before any `docker run`
+command will work; if it is in Windows containers mode every `docker run`
+fails with `exec format error` regardless of the `--platform` flag.
+
+To check and switch:
+
+1. Find the Docker Desktop icon in the Windows taskbar notification area
+   (bottom-right).
+2. **Right-click** the icon.
+3. If the menu shows **"Switch to Linux containers…"**, click it and wait for
+   Docker to restart.  (If it shows "Switch to Windows containers…" instead,
+   you are already in Linux mode — nothing to do.)
+
+After switching, verify the setting is correct:
+Open Docker Desktop → **Settings** → **General** → confirm
+**"Use the WSL 2 based engine"** is ticked.
+
+### Step 3: Pull the official SDPB Docker image
 
 Open a **PowerShell** window and run:
 
@@ -53,48 +74,19 @@ Open a **PowerShell** window and run:
 docker pull --platform linux/amd64 bootstrapcollaboration/sdpb:master
 ```
 
-The `--platform linux/amd64` flag tells Docker to pull the x86-64 image.
-You can also use a specific release tag, e.g.
+The `--platform linux/amd64` flag ensures the x86-64 Linux image is pulled
+explicitly.  You can also use a specific release tag, e.g.
 `bootstrapcollaboration/sdpb:3.1.0`.
 
-### Step 2b: Enable QEMU emulation (required on ARM64 machines)
-
-> **Do this step if your Windows PC has an ARM64 CPU**, e.g. a Snapdragon X
-> Elite / X Plus chip.  You can skip it on regular Intel/AMD x86-64 machines.
->
-> To check: open Task Manager → Performance → CPU.  If it says "ARM" or
-> "Qualcomm", you need this step.
-
-The SDPB Docker image is built for x86-64 Linux.  On an ARM64 machine,
-Docker can still run it — but only after installing QEMU binfmt emulation
-handlers inside the Docker Linux VM.  Without this step, every `docker run`
-command will fail with **`exec /usr/bin/mpirun: exec format error`**,
-even when `--platform linux/amd64` is specified.
-
-Run this **once** (it persists across reboots and Docker restarts):
-
-```powershell
-docker run --rm --privileged tonistiigi/binfmt --install all
-```
-
-You should see output like:
-```
-installing: amd64 OK
-installing: 386 OK
-...
-```
-
-Then verify SDPB runs correctly:
+Test it works:
 
 ```powershell
 docker run --rm --platform linux/amd64 bootstrapcollaboration/sdpb:master sdpb --help
 ```
 
-You should see the SDPB option list.  If you still see `exec format error`,
-restart Docker Desktop, re-run the `binfmt --install all` command, and try
-again.
+You should see the SDPB option list.
 
-### Step 3: Get Python (if you don't have it)
+### Step 4: Get Python (if you don't have it)
 
 Download Python 3.9+ from https://www.python.org/downloads/.
 During installation, check the box **"Add Python to PATH"**.
@@ -350,23 +342,21 @@ where D is spin-dependent and α = (d−3)/2.
 ## Troubleshooting
 
 **`exec /usr/bin/mpirun: exec format error`**
-→ The SDPB container binary doesn't match your machine's CPU architecture.
-  This happens in two stages — work through them in order:
+→ Docker is trying to run a Linux binary with the wrong container mode.
+  Work through these checks in order:
 
-  **Stage 1 — wrong image cached:** pull the x86-64 image explicitly:
+  **Check 1 — Docker is in Windows containers mode (most common cause):**
+  Right-click the Docker Desktop tray icon.  If it offers
+  **"Switch to Linux containers…"**, click it and wait for Docker to restart,
+  then retry.  The SDPB image is a Linux container and will not run while
+  Docker is in Windows containers mode.
+
+  **Check 2 — wrong image cached:** even in Linux mode, an old cached image
+  for the wrong architecture can cause this.  Re-pull explicitly:
   ```powershell
   docker pull --platform linux/amd64 bootstrapcollaboration/sdpb:master
   ```
   Then retry your `docker run --platform linux/amd64 …` command.
-
-  **Stage 2 — ARM64 machine (still failing after Stage 1):** your PC has an
-  ARM64 CPU (e.g. Snapdragon) and QEMU emulation is not installed.
-  Run this once to install QEMU binfmt handlers inside Docker:
-  ```powershell
-  docker run --rm --privileged tonistiigi/binfmt --install all
-  ```
-  Restart Docker Desktop, then retry.  After this, `--platform linux/amd64`
-  will work correctly.
 
 **`terminateReason = "dual infeasible"`**
 → The SDP is infeasible — no solution exists with those parameters.
