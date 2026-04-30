@@ -230,15 +230,131 @@ A `terminateReason` of `"found primal-dual optimal solution"` means success.
 
 ---
 
-## Produce a 2D allowed-region plot of (g̃₃, g̃₄)
+## Produce a 2D allowed-region plot of (g̃₃, g̃₄) — recommended workflow
+
+The recommended way to generate all four bounds at once is the **`run_bounds.py`
+batch driver**.  It generates the four PMP JSON files in one call and has the
+same `--K` convention as `generate_pmp.py` (maximum spectral power `2n+m`).
+
+### Step 1: Generate all 4 PMP files with `run_bounds.py`
+
+```powershell
+cd C:\sdpb_eft
+python -m eft_bounds.run_bounds --output-dir pmp_files --d 4 --K 8 --max-spin 50 --precision 1024
+```
+
+This creates four files in `C:\sdpb_eft\pmp_files\`:
+
+| File | Computes |
+|------|---------|
+| `csdr_pmp_lower_W2_0_over_W1_0_d4_K8.json` | Lower bound on g̃₄ |
+| `csdr_pmp_upper_W2_0_over_W1_0_d4_K8.json` | Upper bound on g̃₄ |
+| `csdr_pmp_lower_W1_1_over_W1_0_d4_K8.json` | Lower bound on g̃₃ |
+| `csdr_pmp_upper_W1_1_over_W1_0_d4_K8.json` | Upper bound on g̃₃ |
+
+> **Parameters**: `--K 8` sets the spectral cutoff; `--max-spin 50` includes
+> even spins ℓ = 0, 2, …, 50 per block; `--precision 1024` writes 1024-digit
+> coefficients (matching `--precision=1024` in the Docker step).
+
+### Step 2: Run pmp2sdp for each PMP file
+
+```powershell
+docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:3.1.0 mpirun --allow-run-as-root -n 4 pmp2sdp --precision 1024 -i /usr/local/share/sdpb/pmp_files/csdr_pmp_lower_W2_0_over_W1_0_d4_K8.json -o /usr/local/share/sdpb/sdp_lb_g4
+
+docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:3.1.0 mpirun --allow-run-as-root -n 4 pmp2sdp --precision 1024 -i /usr/local/share/sdpb/pmp_files/csdr_pmp_upper_W2_0_over_W1_0_d4_K8.json -o /usr/local/share/sdpb/sdp_ub_g4
+
+docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:3.1.0 mpirun --allow-run-as-root -n 4 pmp2sdp --precision 1024 -i /usr/local/share/sdpb/pmp_files/csdr_pmp_lower_W1_1_over_W1_0_d4_K8.json -o /usr/local/share/sdpb/sdp_lb_g3
+
+docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:3.1.0 mpirun --allow-run-as-root -n 4 pmp2sdp --precision 1024 -i /usr/local/share/sdpb/pmp_files/csdr_pmp_upper_W1_1_over_W1_0_d4_K8.json -o /usr/local/share/sdpb/sdp_ub_g3
+```
+
+### Step 3: Run SDPB for each SDP
+
+```powershell
+docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:3.1.0 mpirun --allow-run-as-root -n 4 sdpb --precision=1024 -s /usr/local/share/sdpb/sdp_lb_g4 -o /usr/local/share/sdpb/out_lb_g4 --checkpointDir /usr/local/share/sdpb/ck_lb_g4
+
+docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:3.1.0 mpirun --allow-run-as-root -n 4 sdpb --precision=1024 -s /usr/local/share/sdpb/sdp_ub_g4 -o /usr/local/share/sdpb/out_ub_g4 --checkpointDir /usr/local/share/sdpb/ck_ub_g4
+
+docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:3.1.0 mpirun --allow-run-as-root -n 4 sdpb --precision=1024 -s /usr/local/share/sdpb/sdp_lb_g3 -o /usr/local/share/sdpb/out_lb_g3 --checkpointDir /usr/local/share/sdpb/ck_lb_g3
+
+docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:3.1.0 mpirun --allow-run-as-root -n 4 sdpb --precision=1024 -s /usr/local/share/sdpb/sdp_ub_g3 -o /usr/local/share/sdpb/out_ub_g3 --checkpointDir /usr/local/share/sdpb/ck_ub_g3
+```
+
+> **Do not** pass `-c` (checkpoint load) for a fresh run.  Only `--checkpointDir`
+> is needed — it tells SDPB where to save checkpoints if the run is interrupted.
+
+### Step 4: Collect results
+
+```powershell
+type C:\sdpb_eft\out_lb_g4\out.txt
+type C:\sdpb_eft\out_ub_g4\out.txt
+type C:\sdpb_eft\out_lb_g3\out.txt
+type C:\sdpb_eft\out_ub_g3\out.txt
+```
+
+Record `primalObjective` from each file:
+
+| File | Bound on | How to read |
+|------|---------|-------------|
+| `out_lb_g4/out.txt` | Lower g̃₄ | `primalObjective` is the lower bound directly |
+| `out_ub_g4/out.txt` | Upper g̃₄ | `primalObjective` is the upper bound directly |
+| `out_lb_g3/out.txt` | Lower g̃₃ | `primalObjective` is the lower bound directly |
+| `out_ub_g3/out.txt` | Upper g̃₃ | `primalObjective` is the upper bound directly |
+
+> `terminateReason = "found primal-dual optimal solution"` means the solver converged.
+> The `dualityGap` should be ≲ 10⁻²⁰ for a well-converged result.
+
+---
+
+## Running at higher cutoff K=12 for tighter bounds
+
+Larger K includes more spectral operators and produces tighter allowed regions.
+The commands below use K=12; the workflow is identical.
+
+### Generate PMP files at K=12
+
+```powershell
+python -m eft_bounds.run_bounds --output-dir pmp_files_K12 --d 4 --K 12 --max-spin 50 --precision 1024
+```
+
+### Run pmp2sdp for K=12
+
+```powershell
+docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:3.1.0 mpirun --allow-run-as-root -n 4 pmp2sdp --precision 1024 -i /usr/local/share/sdpb/pmp_files_K12/csdr_pmp_lower_W2_0_over_W1_0_d4_K12.json -o /usr/local/share/sdpb/sdp_K12_lb_g4
+
+docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:3.1.0 mpirun --allow-run-as-root -n 4 pmp2sdp --precision 1024 -i /usr/local/share/sdpb/pmp_files_K12/csdr_pmp_upper_W2_0_over_W1_0_d4_K12.json -o /usr/local/share/sdpb/sdp_K12_ub_g4
+
+docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:3.1.0 mpirun --allow-run-as-root -n 4 pmp2sdp --precision 1024 -i /usr/local/share/sdpb/pmp_files_K12/csdr_pmp_lower_W1_1_over_W1_0_d4_K12.json -o /usr/local/share/sdpb/sdp_K12_lb_g3
+
+docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:3.1.0 mpirun --allow-run-as-root -n 4 pmp2sdp --precision 1024 -i /usr/local/share/sdpb/pmp_files_K12/csdr_pmp_upper_W1_1_over_W1_0_d4_K12.json -o /usr/local/share/sdpb/sdp_K12_ub_g3
+```
+
+### Run SDPB for K=12
+
+```powershell
+docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:3.1.0 mpirun --allow-run-as-root -n 4 sdpb --precision=1024 -s /usr/local/share/sdpb/sdp_K12_lb_g4 -o /usr/local/share/sdpb/out_K12_lb_g4 --checkpointDir /usr/local/share/sdpb/ck_K12_lb_g4
+
+docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:3.1.0 mpirun --allow-run-as-root -n 4 sdpb --precision=1024 -s /usr/local/share/sdpb/sdp_K12_ub_g4 -o /usr/local/share/sdpb/out_K12_ub_g4 --checkpointDir /usr/local/share/sdpb/ck_K12_ub_g4
+
+docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:3.1.0 mpirun --allow-run-as-root -n 4 sdpb --precision=1024 -s /usr/local/share/sdpb/sdp_K12_lb_g3 -o /usr/local/share/sdpb/out_K12_lb_g3 --checkpointDir /usr/local/share/sdpb/ck_K12_lb_g3
+
+docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:3.1.0 mpirun --allow-run-as-root -n 4 sdpb --precision=1024 -s /usr/local/share/sdpb/sdp_K12_ub_g3 -o /usr/local/share/sdpb/out_K12_ub_g3 --checkpointDir /usr/local/share/sdpb/ck_K12_ub_g3
+```
+
+---
+
+## Produce a 2D allowed-region plot of (g̃₃, g̃₄) — manual `generate_pmp.py` workflow
+
+You can also generate PMP files one at a time using `generate_pmp.py`; the `--K`
+flag has the same meaning as in `run_bounds.py`.
 
 ### Step 1: Generate 4 PMP files
 
 ```powershell
-python eft_bounds\generate_pmp.py --obj 1 1 --norm 1 0 --d 4 --K 4 --max-spin 10 --delta0 40 --direction upper --output ub_g3.json
-python eft_bounds\generate_pmp.py --obj 1 1 --norm 1 0 --d 4 --K 4 --max-spin 10 --delta0 40 --direction lower --output lb_g3.json
-python eft_bounds\generate_pmp.py --obj 2 0 --norm 1 0 --d 4 --K 4 --max-spin 10 --delta0 40 --direction upper --output ub_g4.json
-python eft_bounds\generate_pmp.py --obj 2 0 --norm 1 0 --d 4 --K 4 --max-spin 10 --delta0 40 --direction lower --output lb_g4.json
+python eft_bounds\generate_pmp.py --obj 1 1 --norm 1 0 --d 4 --K 8 --max-spin 50 --delta0 40 --direction upper --output ub_g3.json
+python eft_bounds\generate_pmp.py --obj 1 1 --norm 1 0 --d 4 --K 8 --max-spin 50 --delta0 40 --direction lower --output lb_g3.json
+python eft_bounds\generate_pmp.py --obj 2 0 --norm 1 0 --d 4 --K 8 --max-spin 50 --delta0 40 --direction upper --output ub_g4.json
+python eft_bounds\generate_pmp.py --obj 2 0 --norm 1 0 --d 4 --K 8 --max-spin 50 --delta0 40 --direction lower --output lb_g4.json
 ```
 
 Each command prints the exact `docker run` commands for that file.
@@ -250,7 +366,7 @@ Use the printed commands, or adapt this pattern (example for `lb_g3.json`):
 ```powershell
 docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:3.1.0 mpirun --allow-run-as-root -n 4 pmp2sdp --precision 1024 -i /usr/local/share/sdpb/lb_g3.json -o /usr/local/share/sdpb/sdp_lb_g3
 
-docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:3.1.0 mpirun --allow-run-as-root -n 4 sdpb --precision=1024 -s /usr/local/share/sdpb/sdp_lb_g3 -o /usr/local/share/sdpb/out_lb_g3 -c /usr/local/share/sdpb/out_lb_g3/ck
+docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:3.1.0 mpirun --allow-run-as-root -n 4 sdpb --precision=1024 -s /usr/local/share/sdpb/sdp_lb_g3 -o /usr/local/share/sdpb/out_lb_g3 --checkpointDir /usr/local/share/sdpb/ck_lb_g3
 ```
 
 ### Step 3: Collect results
@@ -260,12 +376,13 @@ Open each `out.txt` and record `primalObjective`:
 | File | Bound on | primalObjective = |
 |------|---------|-----------------|
 | `out_ub_g3/out.txt` | upper g̃₃ | e.g. 3.12 |
-| `out_lb_g3/out.txt` | −(lower g̃₃) | e.g. 2.45 → g̃₃ ≥ −2.45 |
+| `out_lb_g3/out.txt` | lower g̃₃ | e.g. −2.45 |
 | `out_ub_g4/out.txt` | upper g̃₄ | e.g. 4.50 |
-| `out_lb_g4/out.txt` | −(lower g̃₄) | e.g. 1.20 → g̃₄ ≥ −1.20 |
+| `out_lb_g4/out.txt` | lower g̃₄ | e.g. 800 |
 
-> For `--direction lower`, `generate_pmp.py` negates the objective.
-> The true lower bound is **negative** of `primalObjective`.
+> For `--direction lower`, `generate_pmp.py` negates the objective internally,
+> so `primalObjective` is already the true lower bound (positive if lower bound
+> is positive, negative if it is negative).  No further sign flip is needed.
 
 ### Step 4: Plot in Python
 
@@ -274,17 +391,21 @@ Install matplotlib:
 pip install matplotlib
 ```
 
-Create `plot_region.py` in `C:\sdpb_eft\`:
+Create `plot_region.py` in `C:\sdpb_eft\`.  Replace the placeholder values
+with the `primalObjective` numbers from your four `out.txt` files.  No sign
+flipping is needed — `primalObjective` from a lower-bound run is already the
+true lower bound.
 
 ```python
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
 # Replace with values from your out.txt files
+# (primalObjective is already the correctly signed bound in both directions)
 ub_g3  =  3.12   # primalObjective from out_ub_g3/out.txt
-lb_g3  = -2.45   # NEGATIVE of primalObjective from out_lb_g3/out.txt
-ub_g4  =  4.50
-lb_g4  = -1.20
+lb_g3  = -2.45   # primalObjective from out_lb_g3/out.txt
+ub_g4  =  850.0  # primalObjective from out_ub_g4/out.txt
+lb_g4  =  800.0  # primalObjective from out_lb_g4/out.txt
 
 fig, ax = plt.subplots(figsize=(6, 5))
 rect = patches.Rectangle(
@@ -294,14 +415,50 @@ rect = patches.Rectangle(
 )
 ax.add_patch(rect)
 ax.set_xlim(lb_g3 - 0.5, ub_g3 + 0.5)
-ax.set_ylim(lb_g4 - 0.5, ub_g4 + 0.5)
+ax.set_ylim(lb_g4 - 5, ub_g4 + 5)
 ax.set_xlabel(r'$\tilde{g}_3 = W_{0,1}/W_{1,0}$', fontsize=12)
 ax.set_ylabel(r'$\tilde{g}_4 = W_{2,0}/W_{1,0}$', fontsize=12)
-ax.set_title('Allowed EFT region (CSDR, K=4, d=4, $\\delta_0$=40)', fontsize=11)
+ax.set_title('Allowed EFT region (CSDR, K=8, d=4, max-spin=50)', fontsize=11)
 ax.legend()
 plt.tight_layout()
 plt.savefig('allowed_region.png', dpi=150)
 print('Saved: allowed_region.png')
+plt.show()
+```
+
+To overlay results from K=8 and K=12 on the same plot (to see convergence):
+
+```python
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+
+# K=8 results — fill in from out_*_K8 runs
+ub_g3_K8 =  3.12;  lb_g3_K8 = -2.45
+ub_g4_K8 =  850.0; lb_g4_K8 =  800.0
+
+# K=12 results — fill in from out_K12_* runs (tighter, inner rectangle)
+ub_g3_K12 =  2.90; lb_g3_K12 = -2.20
+ub_g4_K12 =  840.0; lb_g4_K12 =  810.0
+
+fig, ax = plt.subplots(figsize=(7, 6))
+for (lb3, ub3, lb4, ub4, color, label) in [
+    (lb_g3_K8,  ub_g3_K8,  lb_g4_K8,  ub_g4_K8,  'lightblue', 'K=8'),
+    (lb_g3_K12, ub_g3_K12, lb_g4_K12, ub_g4_K12, 'lightyellow', 'K=12'),
+]:
+    ax.add_patch(patches.Rectangle(
+        (lb3, lb4), ub3 - lb3, ub4 - lb4,
+        linewidth=2, edgecolor='navy', facecolor=color, alpha=0.6, label=label
+    ))
+
+ax.set_xlim(lb_g3_K8 - 1, ub_g3_K8 + 1)
+ax.set_ylim(lb_g4_K8 - 10, ub_g4_K8 + 10)
+ax.set_xlabel(r'$\tilde{g}_3 = W_{0,1}/W_{1,0}$', fontsize=12)
+ax.set_ylabel(r'$\tilde{g}_4 = W_{2,0}/W_{1,0}$', fontsize=12)
+ax.set_title('Allowed EFT region (CSDR, d=4, max-spin=50)', fontsize=11)
+ax.legend()
+plt.tight_layout()
+plt.savefig('allowed_region_K8_K12.png', dpi=150)
+print('Saved: allowed_region_K8_K12.png')
 plt.show()
 ```
 
@@ -314,14 +471,24 @@ python plot_region.py
 
 ## Understanding the parameters
 
-### Parameters for `generate_pmp.py`
+### Parameters for `run_bounds.py` (batch driver — recommended)
+
+| Flag | Meaning | Recommended value |
+|------|---------|-------------------|
+| `--output-dir` | Output directory for PMP JSON files | e.g. `pmp_files` |
+| `--d` | Spacetime dimension | 4 (for 4D QFT) |
+| `--K` | Max spectral power 2n+m | 8 (default); 12 for tighter bounds |
+| `--max-spin` | Max even spin ℓ | **50** (use at least 20) |
+| `--precision` | Decimal digits in PMP coefficients | 1024 (matches SDPB `--precision=1024` bits ≈ 308 digits; use 1024 for safety) |
+
+### Parameters for `generate_pmp.py` (single-bound driver)
 
 | Flag | Meaning | Notes |
 |------|---------|-------|
-| `--K` | Max spectral power 2n+m | More operators → tighter bounds, slower |
+| `--K` | Max spectral power 2n+m | Same convention as `run_bounds.py` |
 | `--d` | Spacetime dimension | Physical: d=4 for 4D |
 | `--delta0` | IR cutoff δ₀ | s₁ starts at δ₀; matches the paper |
-| `--max-spin` | Max even spin ℓ | More spins → tighter bounds, slower |
+| `--max-spin` | Max even spin ℓ | **50** recommended; more spins → tighter bounds, slower |
 | `--precision` | Decimal digits in output | 200 is safe; use 50 for quick tests |
 | `--obj n m` | Wilson coeff to bound | (n, m) pair with n ≥ m ≥ 0 |
 | `--norm n m` | Normalization coeff | Set this W to 1 |

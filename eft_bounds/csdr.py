@@ -482,7 +482,6 @@ def enumerate_obj_pairs_nm(K: int) -> List[Tuple[int, int]]:
                 pairs.append((n, m))
     pairs.sort(key=lambda x: (2 * x[0] + x[1], x[1]))
     return pairs
-    return pairs
 
 
 def enumerate_obj_pairs(K: int) -> List[Tuple[int, int]]:

@@ -214,6 +214,8 @@ def compute_kernel_table(
 
     obj_table = []
     for (p, q) in obj_pairs:
+        # Convert (p, q) Wilson notation (p = n-m, q = m) to CSDR (n, m) with n = p+q, m = q.
+        n_nm, m_nm = p + q, q
         row = {
             "type": "objective",
             "p": p, "q": q,
@@ -221,7 +223,7 @@ def compute_kernel_table(
             "kernels": {},
         }
         for ell in ell_list:
-            kappa = obj_kernel_coeff(p, q, ell, d)
+            kappa = obj_kernel_coeff(n_nm, m_nm, ell, d)
             row["kernels"][str(ell)] = fraction_to_str(kappa, precision)
         obj_table.append(row)
 
