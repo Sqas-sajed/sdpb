@@ -384,6 +384,13 @@ def main() -> None:
         help="Decimal precision for SDPB output (default: 200).",
     )
     parser.add_argument(
+        "--delta0", type=int, default=1,
+        help=(
+            "IR cutoff: integration starts at s1 = delta0 (default: 1).\n"
+            "Use delta0=40 for well-conditioned Wilson coefficient magnitudes."
+        ),
+    )
+    parser.add_argument(
         "--checks-only", action="store_true",
         help="Run consistency checks only, do not generate PMP files.",
     )
@@ -400,6 +407,7 @@ def main() -> None:
         K=args.K,
         max_spin=args.max_spin,
         precision=args.precision,
+        delta0=args.delta0,
     )
     print(json.dumps(result, indent=2))
     if not result["all_checks_passed"]:

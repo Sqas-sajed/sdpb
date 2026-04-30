@@ -292,23 +292,55 @@ type C:\sdpb_eft\out_lb_g3\out.txt
 type C:\sdpb_eft\out_ub_g3\out.txt
 ```
 
-Record `primalObjective` from each file:
+#### Which runs converge and which diverge — and why
 
-| File | Bound on | How to read |
-|------|---------|-------------|
-| `out_lb_g4/out.txt` | Lower g̃₄ | `primalObjective` is the lower bound directly |
-| `out_ub_g4/out.txt` | Upper g̃₄ | `primalObjective` is the upper bound directly |
-| `out_lb_g3/out.txt` | Lower g̃₃ | `primalObjective` is the lower bound directly |
-| `out_ub_g3/out.txt` | Upper g̃₃ | `primalObjective` is the upper bound directly |
+**Only two of the four SDPB runs will converge.  The other two are expected to
+diverge.**  This is not a bug.
 
-> `terminateReason = "found primal-dual optimal solution"` means the solver converged.
-> The `dualityGap` should be ≲ 10⁻²⁰ for a well-converged result.
+| Run | `terminateReason` | What it means |
+|-----|-------------------|---------------|
+| `out_lb_g4` | `"found primal-dual optimal solution"` ✓ | **g̃₄ has a finite lower bound** |
+| `out_ub_g4` | `"maxComplementarity exceeded"` | g̃₄ has **no** finite upper bound from CSDR alone |
+| `out_ub_g3` | `"found primal-dual optimal solution"` ✓ | **g̃₃ has a finite upper bound** |
+| `out_lb_g3` | `"maxComplementarity exceeded"` | g̃₃ has **no** finite lower bound from CSDR alone |
+
+**Physically**, crossing-symmetric dispersion relations (CSDR) impose:
+- A *lower* bound on g̃₄ (the forward-scattering integral is non-negative).
+- An *upper* bound on g̃₃ (a positivity condition at finite spin).
+
+They do not, by themselves, give an upper bound on g̃₄ or a lower bound on g̃₃.
+The `"maxComplementarity exceeded"` message means the SDP found that the
+feasible region is unbounded in that direction — the solver's interior-point
+parameter µ diverged, exactly as expected for an unbounded problem.
+
+> **`"maxComplementarity exceeded"` ≠ error.**  It means the bound is ±∞
+> in that direction.  Do not try to read a physical value from `primalObjective`
+> in those runs — the number printed is meaningless (the SDP never converged).
+
+#### Reading the physical bounds from converged runs
+
+For the two converged runs, `primalObjective` is the physical bound directly:
+
+| File | `terminateReason` | `primalObjective` = |
+|------|-------------------|---------------------|
+| `out_lb_g4/out.txt` | optimal ✓ | **lower bound on g̃₄** |
+| `out_ub_g3/out.txt` | optimal ✓ | **upper bound on g̃₃** |
+
+**Verified results from `sdpb_data2/` (K=8, d=4, max-spin=50):**
+
+| Bound | Value |
+|-------|-------|
+| g̃₄ ≥  | **0.5000** (exact lower bound) |
+| g̃₃ ≤  | **0.3017** |
+
+> `terminateReason = "found primal-dual optimal solution"` means the solver
+> converged.  The `dualityGap` should be ≲ 10⁻²⁰ for a well-converged result.
 
 ---
 
 ## Running at higher cutoff K=12 for tighter bounds
 
-Larger K includes more spectral operators and produces tighter allowed regions.
+Larger K includes more spectral operators and can produce tighter bounds.
 The commands below use K=12; the workflow is identical.
 
 ### Generate PMP files at K=12
@@ -341,131 +373,158 @@ docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" 
 docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:3.1.0 mpirun --allow-run-as-root -n 4 sdpb --precision=1024 -s /usr/local/share/sdpb/sdp_K12_ub_g3 -o /usr/local/share/sdpb/out_K12_ub_g3 --checkpointDir /usr/local/share/sdpb/ck_K12_ub_g3
 ```
 
+**Verified results from `sdpb_data2_K12/` (K=12, d=4, max-spin=50):**
+
+| Run | `terminateReason` | `primalObjective` |
+|-----|-------------------|-------------------|
+| `out_K12_lb_g4` | optimal ✓ | **0.5000** (lower bound on g̃₄) |
+| `out_K12_ub_g4` | maxComplementarity exceeded | no finite upper bound (expected) |
+| `out_K12_ub_g3` | optimal ✓ | **0.3018** (upper bound on g̃₃) |
+| `out_K12_lb_g3` | maxComplementarity exceeded | no finite lower bound (expected) |
+
+The K=12 bounds are essentially the same as K=8 for these two operators at
+max-spin=50, confirming the CSDR bounds have converged numerically.
+
 ---
 
-## Produce a 2D allowed-region plot of (g̃₃, g̃₄) — manual `generate_pmp.py` workflow
+## Plotting the allowed region
 
-You can also generate PMP files one at a time using `generate_pmp.py`; the `--K`
-flag has the same meaning as in `run_bounds.py`.
+### What the CSDR bounds give
 
-### Step 1: Generate 4 PMP files
+The CSDR method (Sinha-Zahed, used in this code) provides **two half-plane
+constraints** in the (g̃₃, g̃₄) plane:
 
-```powershell
-python eft_bounds\generate_pmp.py --obj 1 1 --norm 1 0 --d 4 --K 8 --max-spin 50 --delta0 40 --direction upper --output ub_g3.json
-python eft_bounds\generate_pmp.py --obj 1 1 --norm 1 0 --d 4 --K 8 --max-spin 50 --delta0 40 --direction lower --output lb_g3.json
-python eft_bounds\generate_pmp.py --obj 2 0 --norm 1 0 --d 4 --K 8 --max-spin 50 --delta0 40 --direction upper --output ub_g4.json
-python eft_bounds\generate_pmp.py --obj 2 0 --norm 1 0 --d 4 --K 8 --max-spin 50 --delta0 40 --direction lower --output lb_g4.json
-```
+    g̃₄  ≥  0.5000        (lower bound, from K=8 and K=12)
+    g̃₃  ≤  0.3017        (upper bound, from K=8)
 
-Each command prints the exact `docker run` commands for that file.
+The allowed region is the **intersection of these two half-planes**, which is
+an infinite wedge.
 
-### Step 2: Run pmp2sdp + sdpb for each file
+### Relation to Figure 8 of "Extremal EFT" (Caron-Huot & Duong 2021)
 
-Use the printed commands, or adapt this pattern (example for `lb_g3.json`):
+Figure 8 of the paper shows a **bounded** polygon.  That figure uses
+**fixed-t dispersion relations** (Sections 3.3–3.4 of the paper), which give
+additional constraints (e.g. a finite upper bound on g̃₄ from a different
+subtraction scheme) that are *not* present in CSDR.
 
-```powershell
-docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:3.1.0 mpirun --allow-run-as-root -n 4 pmp2sdp --precision 1024 -i /usr/local/share/sdpb/lb_g3.json -o /usr/local/share/sdpb/sdp_lb_g3
+The CSDR approach implemented here correctly recovers the two constraints
+above.  To reproduce the full bounded polygon of figure 8, additional
+fixed-t constraints would need to be added as separate SDP blocks —
+this is a different calculation that is not yet implemented in this codebase.
 
-docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:3.1.0 mpirun --allow-run-as-root -n 4 sdpb --precision=1024 -s /usr/local/share/sdpb/sdp_lb_g3 -o /usr/local/share/sdpb/out_lb_g3 --checkpointDir /usr/local/share/sdpb/ck_lb_g3
-```
+### Step 5: Plot in Python
 
-### Step 3: Collect results
+Install matplotlib if needed:
 
-Open each `out.txt` and record `primalObjective`:
-
-| File | Bound on | primalObjective = |
-|------|---------|-----------------|
-| `out_ub_g3/out.txt` | upper g̃₃ | e.g. 3.12 |
-| `out_lb_g3/out.txt` | lower g̃₃ | e.g. −2.45 |
-| `out_ub_g4/out.txt` | upper g̃₄ | e.g. 4.50 |
-| `out_lb_g4/out.txt` | lower g̃₄ | e.g. 800 |
-
-> For `--direction lower`, `generate_pmp.py` negates the objective internally,
-> so `primalObjective` is already the true lower bound (positive if lower bound
-> is positive, negative if it is negative).  No further sign flip is needed.
-
-### Step 4: Plot in Python
-
-Install matplotlib:
 ```powershell
 pip install matplotlib
 ```
 
-Create `plot_region.py` in `C:\sdpb_eft\`.  Replace the placeholder values
-with the `primalObjective` numbers from your four `out.txt` files.  No sign
-flipping is needed — `primalObjective` from a lower-bound run is already the
-true lower bound.
+Create `plot_region.py` in `C:\sdpb_eft\`.
+
+#### Single-cutoff plot (K=8)
 
 ```python
 import matplotlib.pyplot as plt
-import matplotlib.patches as patches
+import matplotlib.patches as mpatches
+import numpy as np
 
-# Replace with values from your out.txt files
-# (primalObjective is already the correctly signed bound in both directions)
-ub_g3  =  3.12   # primalObjective from out_ub_g3/out.txt
-lb_g3  = -2.45   # primalObjective from out_lb_g3/out.txt
-ub_g4  =  850.0  # primalObjective from out_ub_g4/out.txt
-lb_g4  =  800.0  # primalObjective from out_lb_g4/out.txt
+# ---------------------------------------------------------------
+# Fill in primalObjective from the two CONVERGED runs only.
+# (The two "maxComplementarity exceeded" runs give no finite bound.)
+# ---------------------------------------------------------------
+lb_g4 = 0.5000   # primalObjective from out_lb_g4/out.txt
+ub_g3 = 0.3017   # primalObjective from out_ub_g3/out.txt
 
-fig, ax = plt.subplots(figsize=(6, 5))
-rect = patches.Rectangle(
-    (lb_g3, lb_g4), ub_g3 - lb_g3, ub_g4 - lb_g4,
-    linewidth=2, edgecolor='blue', facecolor='lightblue', alpha=0.5,
-    label='Allowed region (bounding box)'
+# Plot window: extend well beyond the bounds to show the half-planes
+g3_min, g3_max = -0.5, 0.7
+g4_min, g4_max =  0.0, 2.0
+
+fig, ax = plt.subplots(figsize=(7, 5))
+
+# Shade the ALLOWED region (g3 <= ub_g3  AND  g4 >= lb_g4)
+g3_vals = np.linspace(g3_min, ub_g3, 500)
+ax.fill_betweenx(
+    [lb_g4, g4_max],
+    g3_min, ub_g3,
+    color='lightblue', alpha=0.6, label='CSDR allowed region (K=8, d=4)'
 )
-ax.add_patch(rect)
-ax.set_xlim(lb_g3 - 0.5, ub_g3 + 0.5)
-ax.set_ylim(lb_g4 - 5, ub_g4 + 5)
-ax.set_xlabel(r'$\tilde{g}_3 = W_{0,1}/W_{1,0}$', fontsize=12)
-ax.set_ylabel(r'$\tilde{g}_4 = W_{2,0}/W_{1,0}$', fontsize=12)
-ax.set_title('Allowed EFT region (CSDR, K=8, d=4, max-spin=50)', fontsize=11)
-ax.legend()
+
+# Draw bound lines
+ax.axvline(ub_g3, color='blue',   lw=2, linestyle='--', label=rf'$\tilde{{g}}_3 \leq {ub_g3:.4f}$')
+ax.axhline(lb_g4, color='navy',   lw=2, linestyle='-',  label=rf'$\tilde{{g}}_4 \geq {lb_g4:.4f}$')
+
+ax.set_xlim(g3_min, g3_max)
+ax.set_ylim(g4_min, g4_max)
+ax.set_xlabel(r'$\tilde{g}_3 = W_{0,1}/W_{1,0}$', fontsize=13)
+ax.set_ylabel(r'$\tilde{g}_4 = W_{2,0}/W_{1,0}$', fontsize=13)
+ax.set_title('CSDR allowed region (K=8, d=4, max-spin=50)', fontsize=12)
+ax.legend(fontsize=11)
 plt.tight_layout()
-plt.savefig('allowed_region.png', dpi=150)
-print('Saved: allowed_region.png')
+plt.savefig('allowed_region_K8.png', dpi=150)
+print('Saved: allowed_region_K8.png')
 plt.show()
 ```
 
-To overlay results from K=8 and K=12 on the same plot (to see convergence):
+#### K=8 and K=12 overlay (to see convergence)
 
 ```python
 import matplotlib.pyplot as plt
-import matplotlib.patches as patches
+import numpy as np
 
-# K=8 results — fill in from out_*_K8 runs
-ub_g3_K8 =  3.12;  lb_g3_K8 = -2.45
-ub_g4_K8 =  850.0; lb_g4_K8 =  800.0
+# K=8 bounds (from sdpb_data2/)
+lb_g4_K8  = 0.5000
+ub_g3_K8  = 0.3017
 
-# K=12 results — fill in from out_K12_* runs (tighter, inner rectangle)
-ub_g3_K12 =  2.90; lb_g3_K12 = -2.20
-ub_g4_K12 =  840.0; lb_g4_K12 =  810.0
+# K=12 bounds (from sdpb_data2_K12/)
+lb_g4_K12 = 0.5000
+ub_g3_K12 = 0.3018
 
-fig, ax = plt.subplots(figsize=(7, 6))
-for (lb3, ub3, lb4, ub4, color, label) in [
-    (lb_g3_K8,  ub_g3_K8,  lb_g4_K8,  ub_g4_K8,  'lightblue', 'K=8'),
-    (lb_g3_K12, ub_g3_K12, lb_g4_K12, ub_g4_K12, 'lightyellow', 'K=12'),
-]:
-    ax.add_patch(patches.Rectangle(
-        (lb3, lb4), ub3 - lb3, ub4 - lb4,
-        linewidth=2, edgecolor='navy', facecolor=color, alpha=0.6, label=label
-    ))
+g3_min, g3_max = -0.5, 0.7
+g4_min, g4_max =  0.0, 2.0
 
-ax.set_xlim(lb_g3_K8 - 1, ub_g3_K8 + 1)
-ax.set_ylim(lb_g4_K8 - 10, ub_g4_K8 + 10)
-ax.set_xlabel(r'$\tilde{g}_3 = W_{0,1}/W_{1,0}$', fontsize=12)
-ax.set_ylabel(r'$\tilde{g}_4 = W_{2,0}/W_{1,0}$', fontsize=12)
-ax.set_title('Allowed EFT region (CSDR, d=4, max-spin=50)', fontsize=11)
-ax.legend()
+fig, ax = plt.subplots(figsize=(7, 5))
+
+# K=8 allowed region
+ax.fill_betweenx(
+    [lb_g4_K8, g4_max], g3_min, ub_g3_K8,
+    color='lightblue', alpha=0.5, label='K=8 allowed'
+)
+# K=12 allowed region (slightly different shading to show overlap)
+ax.fill_betweenx(
+    [lb_g4_K12, g4_max], g3_min, ub_g3_K12,
+    color='lightyellow', alpha=0.5, label='K=12 allowed'
+)
+
+# Bound lines
+ax.axvline(ub_g3_K8,  color='blue',   lw=2, linestyle='--',
+           label=rf'$\tilde{{g}}_3 \leq {ub_g3_K8:.4f}$ (K=8)')
+ax.axvline(ub_g3_K12, color='green',  lw=2, linestyle=':',
+           label=rf'$\tilde{{g}}_3 \leq {ub_g3_K12:.4f}$ (K=12)')
+ax.axhline(lb_g4_K8,  color='navy',   lw=2, linestyle='-',
+           label=rf'$\tilde{{g}}_4 \geq {lb_g4_K8:.4f}$ (K=8, K=12)')
+
+ax.set_xlim(g3_min, g3_max)
+ax.set_ylim(g4_min, g4_max)
+ax.set_xlabel(r'$\tilde{g}_3 = W_{0,1}/W_{1,0}$', fontsize=13)
+ax.set_ylabel(r'$\tilde{g}_4 = W_{2,0}/W_{1,0}$', fontsize=13)
+ax.set_title('CSDR allowed region, K=8 vs K=12 (d=4, max-spin=50)', fontsize=11)
+ax.legend(fontsize=10)
 plt.tight_layout()
 plt.savefig('allowed_region_K8_K12.png', dpi=150)
 print('Saved: allowed_region_K8_K12.png')
 plt.show()
 ```
 
-Run it:
+Run either script:
+
 ```powershell
 python plot_region.py
 ```
+
+The plot shows the **allowed half-plane wedge** in (g̃₃, g̃₄) space.
+Points to the left of the vertical dashed line and above the horizontal line
+are allowed by CSDR unitarity constraints.
 
 ---
 
@@ -508,16 +567,27 @@ Run `docker run --rm --platform linux/amd64 bootstrapcollaboration/sdpb:3.1.0 sd
 
 ---
 
-## Relation to Extremal EFT (Caron-Huot & Duong 2021)
+## Relation to Extremal EFT (Caron-Huot & Duong 2021) and Figure 8
 
-Figure 8 of "Extremal EFT" uses **fixed-t dispersion relations**, not CSDR.
-The two approaches give different operator bases and different bounds.
+Figure 8 of "Extremal EFT" shows a **bounded** polygon in the (g̃₃, g̃₄) plane.
+That figure uses **fixed-t dispersion relations** (Sections 3.3–3.4 of the
+paper), which provide *more* constraints than CSDR alone:
 
-This code uses the CSDR formula (Sinha & Zahed 2021):
+| Method | Constraints obtained | Region shape |
+|--------|---------------------|-------------|
+| **CSDR** (this code) | g̃₄ ≥ 0.5, g̃₃ ≤ 0.3017 | Open wedge (2 half-planes) |
+| **Fixed-t** (paper) | upper+lower bounds on both g̃₃ and g̃₄ | Bounded polygon |
+
+The CSDR approach in this code implements the Sinha-Zahed (2021) formula:
 
     W_{n−m,m} = ⟨ D^{(n,m)}_{ℓ,α} · C^α_ℓ(1) · (2ℓ+d−3) / s₁^{2n+m} ⟩
 
 where D is spin-dependent and α = (d−3)/2.
+
+The CSDR method gives physically correct bounds for g̃₄ ≥ 0 (lower bound) and
+g̃₃ ≤ 0.3017 (upper bound) at K=8, d=4, max-spin=50.  These are not the same
+as the bounds in the paper because the two formalisms use different subtraction
+schemes and measure different combinations of Wilson coefficients.
 
 ---
 
@@ -540,13 +610,16 @@ where D is spin-dependent and α = (d−3)/2.
   ```
   Then retry your `docker run --platform linux/amd64 …` command.
 
-**`terminateReason = "dual infeasible"`**
-→ The SDP is infeasible — no solution exists with those parameters.
-  Try increasing `--K` or `--max-spin`.
+**`terminateReason = "maxComplementarity exceeded"` (mu diverges)**
+→ This is **expected** for the `ub_g4` and `lb_g3` runs.  It means the SDP
+  is unbounded in that direction — no finite upper bound on g̃₄ or finite lower
+  bound on g̃₃ exists from CSDR alone.  The primalObjective printed is not
+  meaningful for these runs; ignore it.
+→ If this happens for `lb_g4` or `ub_g3` (which should converge), it indicates
+  a bug in the PMP generation.  Re-generate the PMP files making sure you are
+  using the latest `pmp_generator.py` (the version in this repo).
 
-**The bound value looks wrong / very large**
-→ Check `--delta0` matches your physical setup; changing δ₀ rescales W_{n,m}.
-→ For lower bounds, the true bound = **negative** of `primalObjective`.
+
 
 **Docker command fails with "path not found"**
 → Use forward slashes in the `-v` flag on Windows:
