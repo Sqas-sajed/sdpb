@@ -165,9 +165,9 @@ Decision variable notation:
     cwd = os.getcwd().replace("\\", "/")
     print(f"\nNext steps (Docker):")
     print(f"  1. Convert to SDPB binary:")
-    print(f"       docker run --rm --platform linux/amd64 -v \"{cwd}:/usr/local/share/sdpb\" bootstrapcollaboration/sdpb:master mpirun --allow-run-as-root -n 4 pmp2sdp --precision 1024 -i /usr/local/share/sdpb/{args.output} -o /usr/local/share/sdpb/{sdp_dir}")
+    print(f"       docker run --rm --platform linux/amd64 -v \"{cwd}:/usr/local/share/sdpb\" bootstrapcollaboration/sdpb:3.1.0 mpirun --allow-run-as-root -n 4 pmp2sdp --precision 1024 -i /usr/local/share/sdpb/{args.output} -o /usr/local/share/sdpb/{sdp_dir}")
     print(f"  2. Run solver:")
-    print(f"       docker run --rm --platform linux/amd64 -v \"{cwd}:/usr/local/share/sdpb\" bootstrapcollaboration/sdpb:master mpirun --allow-run-as-root -n 4 sdpb --precision=1024 -s /usr/local/share/sdpb/{sdp_dir} -o /usr/local/share/sdpb/out_{sdp_dir} -c /usr/local/share/sdpb/out_{sdp_dir}/ck")
+    print(f"       docker run --rm --platform linux/amd64 -v \"{cwd}:/usr/local/share/sdpb\" bootstrapcollaboration/sdpb:3.1.0 mpirun --allow-run-as-root -n 4 sdpb --precision=1024 -s /usr/local/share/sdpb/{sdp_dir} -o /usr/local/share/sdpb/out_{sdp_dir} -c /usr/local/share/sdpb/out_{sdp_dir}/ck")
     print(f"  3. Read result from:  out_{sdp_dir}/out.txt  (look for 'primalObjective')")
 
 
