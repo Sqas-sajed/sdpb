@@ -63,6 +63,7 @@ from eft_bounds.csdr import (
 from eft_bounds.physics import fraction_to_str
 from eft_bounds.pmp_generator import (
     generate_csdr_pmp,
+    generate_csdr_pmp_fixed_g3,
     generate_pmp_for_ratio_bound,
     write_pmp_json,
 )
@@ -348,6 +349,104 @@ def run_bounds(
 
 
 # ---------------------------------------------------------------------------
+# Parametric 2D scan: fix g̃₃ = v, compute max/min g̃₄(v)
+# ---------------------------------------------------------------------------
+
+def scan_g4_vs_g3(
+    output_dir: str,
+    d: int,
+    g3_values: List[Fraction],
+    K: int = 8,
+    max_spin: int = 10,
+    precision: int = 200,
+    delta0: int = 1,
+    norm_index: Tuple[int, int] = (1, 0),
+    g3_index: Tuple[int, int] = (1, 1),
+    g4_index: Tuple[int, int] = (2, 0),
+) -> Dict[str, Any]:
+    """
+    Generate SDPB PMP files for the parametric 2D allowed-region scan.
+
+    For each g̃₃ = v in g3_values, produce TWO PMP files:
+      * upper bound on g̃₄ at fixed g̃₃ = v  (find max g̃₄)
+      * lower bound on g̃₄ at fixed g̃₃ = v  (find min g̃₄)
+
+    Running all these SDPs and collecting (v, upper_g4, lower_g4) for each v
+    traces the complete 2D boundary of the allowed (g̃₃, g̃₄) region.
+
+    Physics note (Extremal EFT sections 3.3–3.4)
+    ---------------------------------------------
+    The SDP encodes "g̃₃ = v is fixed" by folding v·κ_{g3}(ℓ)·poly(x) into
+    the norm_index polynomial column of each spin block.  This leaves only
+    [z_{norm}, z_{g4}, c_{n,m}...] as free decision variables and ensures the
+    ℓ=0 bounding constraint remains intact.
+
+    See generate_csdr_pmp_fixed_g3 in pmp_generator.py for full details.
+
+    Parameters
+    ----------
+    output_dir : str          Directory for output files.
+    d : int                   Spacetime dimension.
+    g3_values : list of Fraction   Values of g̃₃ to scan.
+    K, max_spin, precision, delta0 : as in run_bounds.
+    norm_index, g3_index, g4_index : Wilson coefficient (n,m) pairs.
+
+    Returns
+    -------
+    dict  Manifest: maps g̃₃ value → {"upper": filepath, "lower": filepath}.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    manifest: Dict[str, Any] = {
+        "output_dir": output_dir,
+        "d": d,
+        "K": K,
+        "delta0": delta0,
+        "norm_index": list(norm_index),
+        "g3_index": list(g3_index),
+        "g4_index": list(g4_index),
+        "scan": [],
+    }
+
+    for g3_val in g3_values:
+        g3_frac = Fraction(g3_val).limit_denominator(10 ** 9)
+        g3_str = str(g3_frac).replace("/", "over")
+        entry: Dict[str, Any] = {
+            "g3_value": str(g3_frac),
+            "files": {},
+        }
+        for direction in ("upper", "lower"):
+            try:
+                pmp = generate_csdr_pmp_fixed_g3(
+                    g3_value=g3_frac,
+                    bound_direction=direction,
+                    d=d,
+                    K=K,
+                    max_spin=max_spin,
+                    precision=precision,
+                    delta0=delta0,
+                    norm_index=norm_index,
+                    g3_index=g3_index,
+                    g4_index=g4_index,
+                )
+                fname = (
+                    f"scan_g4_{direction}_at_g3_{g3_str}"
+                    f"_d{d}_K{K}.json"
+                )
+                fpath = os.path.join(output_dir, fname)
+                write_pmp_json(pmp, fpath)
+                entry["files"][direction] = fpath
+            except ValueError as exc:
+                entry["files"][f"{direction}_error"] = str(exc)
+        manifest["scan"].append(entry)
+
+    manifest_path = os.path.join(output_dir, f"scan_manifest_d{d}_K{K}.json")
+    with open(manifest_path, "w", encoding="utf-8") as fh:
+        json.dump(manifest, fh, indent=2)
+    manifest["manifest_file"] = manifest_path
+    return manifest
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -394,12 +493,52 @@ def main() -> None:
         "--checks-only", action="store_true",
         help="Run consistency checks only, do not generate PMP files.",
     )
+    # --- parametric 2D scan arguments ---
+    parser.add_argument(
+        "--scan-g3", action="store_true",
+        help=(
+            "Run the parametric 2D scan: for each g̃₃ value in [--g3-min, --g3-max]\n"
+            "generate two PMP files (upper and lower bound on g̃₄).\n"
+            "Produces a manifest JSON listing all files for batch SDPB runs.\n"
+            "See SDPB_GUIDE.md section '2D allowed region' for the full workflow."
+        ),
+    )
+    parser.add_argument(
+        "--g3-min", type=float, default=-0.5,
+        help="Minimum g̃₃ value for parametric scan (default: -0.5).",
+    )
+    parser.add_argument(
+        "--g3-max", type=float, default=0.35,
+        help="Maximum g̃₃ value for parametric scan (default: 0.35).",
+    )
+    parser.add_argument(
+        "--g3-steps", type=int, default=20,
+        help="Number of g̃₃ scan points (default: 20).",
+    )
     args = parser.parse_args()
 
     if args.checks_only:
         checks = run_csdr_checks(d=args.d)
         print(json.dumps(checks, indent=2))
         sys.exit(0 if checks["passed"] else 1)
+
+    if args.scan_g3:
+        import numpy as np  # only required for the scan CLI
+        g3_vals = [
+            Fraction(float(v)).limit_denominator(1000)
+            for v in np.linspace(args.g3_min, args.g3_max, args.g3_steps)
+        ]
+        result = scan_g4_vs_g3(
+            output_dir=args.output_dir,
+            d=args.d,
+            g3_values=g3_vals,
+            K=args.K,
+            max_spin=args.max_spin,
+            precision=args.precision,
+            delta0=args.delta0,
+        )
+        print(json.dumps(result, indent=2))
+        return
 
     result = run_bounds(
         output_dir=args.output_dir,

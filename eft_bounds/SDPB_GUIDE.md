@@ -407,9 +407,202 @@ K does not change it.
 
 ---
 
-## Plotting the allowed region
+## Computing the full 2D allowed region (parametric scan)
 
-### What the CSDR bounds give
+### Why four independent runs are not enough
+
+The four runs above each produce a **1D half-plane** bound — they answer
+"what is the extreme value of g̃₄ (or g̃₃) over all possible EFT spectra?"
+That gives an open wedge.
+
+To trace the **2D boundary** (like Figure 8 of the Extremal EFT paper) you
+need a *coupled* constraint: for each fixed value of g̃₃ = v, what is the
+tightest allowed range of g̃₄?  Running SDPB for many such v values traces
+the complete boundary curve.
+
+### How the parametric SDP works
+
+The SDPB normalization is c·y = 1, which fixes z_{1,0} = 1.
+SDPB only allows **one** normalization equation, so fixing g̃₃ = v as a
+second equation "z_{1,1} = v" is not directly expressible.
+
+The trick: fold the g̃₃ contribution into the norm column of every spin
+block:
+
+    p_{z_{1,0}}(x; ℓ) ← κ_{1,0}(ℓ)·(1+x)^{K−2}
+                       + v · κ_{1,1}(ℓ)·(1+x)^{K−3}
+
+When SDPB enforces z_{1,0} = 1, the combined polynomial automatically
+contributes (κ_{1,0} + v·κ_{1,1}) per spin block — exactly as if g̃₃ = v
+had been set explicitly.  The only free decision variables are z_{1,0},
+z_{2,0}, and the null-constraint Lagrange multipliers.
+
+This is implemented in `generate_csdr_pmp_fixed_g3` (pmp_generator.py)
+and automated by `scan_g4_vs_g3` (run_bounds.py).
+
+### Step 1: Generate the scan PMP files
+
+```powershell
+python -m eft_bounds.run_bounds ^
+    --output-dir C:\sdpb_eft\scan_pmp ^
+    --d 4 --K 8 --max-spin 50 --precision 1024 ^
+    --scan-g3 --g3-min -0.5 --g3-max 0.35 --g3-steps 20
+```
+
+This writes 40 PMP files (upper + lower for each of 20 g̃₃ values) and a
+`scan_manifest_d4_K8.json` listing all file paths.
+
+### Step 2: Run pmp2sdp for every scan file
+
+The manifest file lists paths like:
+`scan_g4_upper_at_g3_N1over4_d4_K8.json` (g̃₃ = −1/4, maximize g̃₄)
+`scan_g4_lower_at_g3_N1over4_d4_K8.json` (g̃₃ = −1/4, minimize g̃₄)
+...
+
+Run pmp2sdp for each:
+
+```powershell
+docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" ^
+  bootstrapcollaboration/sdpb:3.1.0 ^
+  mpirun --allow-run-as-root -n 4 pmp2sdp --precision 1024 ^
+  -i /usr/local/share/sdpb/scan_pmp/scan_g4_upper_at_g3_N1over4_d4_K8.json ^
+  -o /usr/local/share/sdpb/scan_sdp/ub_g3_N1over4
+```
+
+Repeat for every file in the manifest.  A PowerShell loop can automate this:
+
+```powershell
+$manifest = Get-Content C:\sdpb_eft\scan_pmp\scan_manifest_d4_K8.json | ConvertFrom-Json
+foreach ($entry in $manifest.scan) {
+    foreach ($dir in @("upper","lower")) {
+        $src  = $entry.files.$dir -replace "^C:\\sdpb_eft", "/usr/local/share/sdpb"
+        $tag  = $entry.g3_value -replace "/","over"
+        $dest = "/usr/local/share/sdpb/scan_sdp/g4_${dir}_g3_${tag}"
+        docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" `
+          bootstrapcollaboration/sdpb:3.1.0 `
+          mpirun --allow-run-as-root -n 4 pmp2sdp --precision 1024 `
+          -i $src -o $dest
+    }
+}
+```
+
+### Step 3: Run SDPB for each scan SDP
+
+```powershell
+foreach ($entry in $manifest.scan) {
+    foreach ($dir in @("upper","lower")) {
+        $tag  = $entry.g3_value -replace "/","over"
+        $sdp  = "/usr/local/share/sdpb/scan_sdp/g4_${dir}_g3_${tag}"
+        $out  = "/usr/local/share/sdpb/scan_out/g4_${dir}_g3_${tag}"
+        $ck   = "/usr/local/share/sdpb/scan_ck/g4_${dir}_g3_${tag}"
+        docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" `
+          bootstrapcollaboration/sdpb:3.1.0 `
+          mpirun --allow-run-as-root -n 4 sdpb --precision=1024 `
+          -s $sdp -o $out --checkpointDir $ck
+    }
+}
+```
+
+### Step 4: Collect results and read physical bounds
+
+For each scan point, read `out.txt` from the SDPB output directory.
+
+- If `terminateReason = "found primal-dual optimal solution"`:
+  - **upper-bound run**: g̃₄ upper boundary at this g̃₃ = **+primalObjective**
+  - **lower-bound run**: g̃₄ lower boundary at this g̃₃ = **−primalObjective**
+- If `terminateReason = "maxComplementarity exceeded"`: no finite bound at
+  this g̃₃ value — the SDP is unbounded in that direction.
+
+Collect the valid (g̃₃, g̃₄_upper) and (g̃₃, g̃₄_lower) pairs.
+
+### Step 5: Plot the 2D allowed region
+
+```python
+import matplotlib.pyplot as plt
+import numpy as np
+import json, re
+
+# ---------------------------------------------------------------
+# Read all SDPB outputs for the parametric scan.
+# Adjust paths to match where you saved the SDPB output directories.
+# ---------------------------------------------------------------
+OUT_BASE = r"C:\sdpb_eft\scan_out"   # Windows path
+MANIFEST = r"C:\sdpb_eft\scan_pmp\scan_manifest_d4_K8.json"
+
+with open(MANIFEST) as f:
+    manifest = json.load(f)
+
+g3_upper, g4_upper = [], []
+g3_lower, g4_lower = [], []
+
+for entry in manifest["scan"]:
+    g3_val = float(entry["g3_value"].split("/")[0]) / (
+        float(entry["g3_value"].split("/")[1])
+        if "/" in entry["g3_value"] else 1
+    )
+    g3_frac_str = entry["g3_value"].replace("/", "over")
+
+    for direction in ("upper", "lower"):
+        out_dir = rf"{OUT_BASE}\g4_{direction}_g3_{g3_frac_str}"
+        out_file = rf"{out_dir}\out.txt"
+        try:
+            text = open(out_file).read()
+        except FileNotFoundError:
+            continue
+        if "found primal-dual optimal" not in text:
+            continue
+        m = re.search(r"primalObjective\s*=\s*([-\d.eE+]+)", text)
+        if not m:
+            continue
+        pobj = float(m.group(1))
+        if direction == "upper":
+            g3_upper.append(g3_val)
+            g4_upper.append(+pobj)   # physical upper bound = +primalObjective
+        else:
+            g3_lower.append(g3_val)
+            g4_lower.append(-pobj)   # physical lower bound = -primalObjective
+
+# Sort by g3
+order_u = np.argsort(g3_upper);  g3_upper = np.array(g3_upper)[order_u]
+order_l = np.argsort(g3_lower);  g3_lower = np.array(g3_lower)[order_l]
+g4_upper = np.array(g4_upper)[order_u]
+g4_lower = np.array(g4_lower)[order_l]
+
+fig, ax = plt.subplots(figsize=(7, 5))
+
+# Fill between upper and lower boundary curves → allowed region
+g3_common = np.intersect1d(g3_upper, g3_lower)
+if len(g3_common) > 0:
+    # Interpolate if needed
+    g4_u_interp = np.interp(g3_common, g3_upper, g4_upper)
+    g4_l_interp = np.interp(g3_common, g3_lower, g4_lower)
+    ax.fill_between(g3_common, g4_l_interp, g4_u_interp,
+                    color="lightblue", alpha=0.6, label="Allowed region (parametric scan)")
+
+ax.plot(g3_upper, g4_upper, "b-o", ms=4, label=r"Upper boundary of $\tilde{g}_4$")
+ax.plot(g3_lower, g4_lower, "r-o", ms=4, label=r"Lower boundary of $\tilde{g}_4$")
+
+ax.set_xlabel(r"$\tilde{g}_3 = W_{0,1}/W_{1,0}$", fontsize=13)
+ax.set_ylabel(r"$\tilde{g}_4 = W_{2,0}/W_{1,0}$", fontsize=13)
+ax.set_title("CSDR 2D allowed region (K=8, d=4, max-spin=50)", fontsize=12)
+ax.legend(fontsize=11)
+plt.tight_layout()
+plt.savefig("allowed_region_2D.png", dpi=150)
+print("Saved: allowed_region_2D.png")
+plt.show()
+```
+
+> **Note:** Not every g̃₃ value will produce a converged upper AND lower bound.
+> For g̃₃ near or beyond the unconstrained bounds (g̃₃ > 0.3017 or g̃₄ < −0.5),
+> some runs will return `maxComplementarity exceeded` — those values of g̃₃ lie
+> outside the feasible region entirely.  The parametric scan automatically
+> traces only the feasible part of the boundary.
+
+---
+
+## Plotting the allowed region (half-plane version, no scan)
+
+### What the CSDR bounds give (4 independent runs)
 
 The CSDR method provides **two half-plane constraints** in the (g̃₃, g̃₄) plane.
 To read the physical bounds from `primalObjective`:
@@ -457,27 +650,33 @@ import numpy as np
 # ---------------------------------------------------------------
 # Fill in primalObjective from the two CONVERGED runs only.
 # (The two "maxComplementarity exceeded" runs give no finite bound.)
+# Physical bounds:  lower-bound run → physical bound = -primalObjective
+#                   upper-bound run → physical bound = +primalObjective
 # ---------------------------------------------------------------
-lb_g4 = 0.5000   # primalObjective from out_lb_g4/out.txt
-ub_g3 = 0.3017   # primalObjective from out_ub_g3/out.txt
+lb_g4_primal = 0.5000   # primalObjective from out_lb_g4/out.txt
+ub_g3_primal = 0.3017   # primalObjective from out_ub_g3/out.txt
+
+phys_lower_g4 = -lb_g4_primal   # = -0.5000  (g̃₄ ≥ -0.5)
+phys_upper_g3 =  ub_g3_primal   # = +0.3017  (g̃₃ ≤ +0.3017)
 
 # Plot window: extend well beyond the bounds to show the half-planes
-g3_min, g3_max = -0.5, 0.7
-g4_min, g4_max =  0.0, 2.0
+g3_min, g3_max = -0.8, 0.7
+g4_min, g4_max = -0.8, 2.0
 
 fig, ax = plt.subplots(figsize=(7, 5))
 
-# Shade the ALLOWED region (g3 <= ub_g3  AND  g4 >= lb_g4)
-g3_vals = np.linspace(g3_min, ub_g3, 500)
+# Shade the ALLOWED region (g3 <= phys_upper_g3  AND  g4 >= phys_lower_g4)
 ax.fill_betweenx(
-    [lb_g4, g4_max],
-    g3_min, ub_g3,
+    [phys_lower_g4, g4_max],
+    g3_min, phys_upper_g3,
     color='lightblue', alpha=0.6, label='CSDR allowed region (K=8, d=4)'
 )
 
 # Draw bound lines
-ax.axvline(ub_g3, color='blue',   lw=2, linestyle='--', label=rf'$\tilde{{g}}_3 \leq {ub_g3:.4f}$')
-ax.axhline(lb_g4, color='navy',   lw=2, linestyle='-',  label=rf'$\tilde{{g}}_4 \geq {lb_g4:.4f}$')
+ax.axvline(phys_upper_g3, color='blue', lw=2, linestyle='--',
+           label=rf'$\tilde{{g}}_3 \leq {phys_upper_g3:.4f}$')
+ax.axhline(phys_lower_g4, color='navy', lw=2, linestyle='-',
+           label=rf'$\tilde{{g}}_4 \geq {phys_lower_g4:.4f}$')
 
 ax.set_xlim(g3_min, g3_max)
 ax.set_ylim(g4_min, g4_max)
@@ -498,36 +697,40 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # K=8 bounds (from sdpb_data2/)
-lb_g4_K8  = 0.5000
-ub_g3_K8  = 0.3017
+lb_g4_K8_primal = 0.5000
+ub_g3_K8_primal = 0.3017
+phys_lower_g4_K8 = -lb_g4_K8_primal   # g̃₄ ≥ -0.5000
+phys_upper_g3_K8 =  ub_g3_K8_primal   # g̃₃ ≤ +0.3017
 
 # K=12 bounds (from sdpb_data2_K12/)
-lb_g4_K12 = 0.5000
-ub_g3_K12 = 0.3018
+lb_g4_K12_primal = 0.5000
+ub_g3_K12_primal = 0.3018
+phys_lower_g4_K12 = -lb_g4_K12_primal
+phys_upper_g3_K12 =  ub_g3_K12_primal
 
-g3_min, g3_max = -0.5, 0.7
-g4_min, g4_max =  0.0, 2.0
+g3_min, g3_max = -0.8, 0.7
+g4_min, g4_max = -0.8, 2.0
 
 fig, ax = plt.subplots(figsize=(7, 5))
 
 # K=8 allowed region
 ax.fill_betweenx(
-    [lb_g4_K8, g4_max], g3_min, ub_g3_K8,
+    [phys_lower_g4_K8, g4_max], g3_min, phys_upper_g3_K8,
     color='lightblue', alpha=0.5, label='K=8 allowed'
 )
 # K=12 allowed region (slightly different shading to show overlap)
 ax.fill_betweenx(
-    [lb_g4_K12, g4_max], g3_min, ub_g3_K12,
+    [phys_lower_g4_K12, g4_max], g3_min, phys_upper_g3_K12,
     color='lightyellow', alpha=0.5, label='K=12 allowed'
 )
 
 # Bound lines
-ax.axvline(ub_g3_K8,  color='blue',   lw=2, linestyle='--',
-           label=rf'$\tilde{{g}}_3 \leq {ub_g3_K8:.4f}$ (K=8)')
-ax.axvline(ub_g3_K12, color='green',  lw=2, linestyle=':',
-           label=rf'$\tilde{{g}}_3 \leq {ub_g3_K12:.4f}$ (K=12)')
-ax.axhline(lb_g4_K8,  color='navy',   lw=2, linestyle='-',
-           label=rf'$\tilde{{g}}_4 \geq {lb_g4_K8:.4f}$ (K=8, K=12)')
+ax.axvline(phys_upper_g3_K8,  color='blue',  lw=2, linestyle='--',
+           label=rf'$\tilde{{g}}_3 \leq {phys_upper_g3_K8:.4f}$ (K=8)')
+ax.axvline(phys_upper_g3_K12, color='green', lw=2, linestyle=':',
+           label=rf'$\tilde{{g}}_3 \leq {phys_upper_g3_K12:.4f}$ (K=12)')
+ax.axhline(phys_lower_g4_K8,  color='navy',  lw=2, linestyle='-',
+           label=rf'$\tilde{{g}}_4 \geq {phys_lower_g4_K8:.4f}$ (K=8, K=12)')
 
 ax.set_xlim(g3_min, g3_max)
 ax.set_ylim(g4_min, g4_max)

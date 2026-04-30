@@ -100,6 +100,8 @@ def _csdr_spin_block(
     d: int,
     precision: int,
     delta0: "Fraction" = None,
+    norm_index: Optional[Tuple[int, int]] = None,
+    fixed_obj_contributions: Optional[List[Tuple[Tuple[int, int], "Fraction"]]] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Build one SDPB PositiveMatrixWithPrefactor block for spin ell.
@@ -118,12 +120,41 @@ def _csdr_spin_block(
     4. Prefactor: e^{-x} / (1+x)^K  (DampedRational, pole at x=-1, multiplicity K).
        Variable substitution: x = s1/delta0 - 1 >= 0.
     5. Assemble 1x1 polynomial block.
+
+    Parameters
+    ----------
+    norm_index : (n, m)
+        The decision variable that will be normalized to 1 by SDPB.  Required
+        when fixed_obj_contributions is supplied.
+    fixed_obj_contributions : list of ((n, m), value)
+        Each entry encodes a Wilson coefficient that is held *fixed* (not a
+        free variable) at the given value (in units where z_{norm_index} = 1).
+        Its spectral contribution is folded into the norm_index column:
+
+          p_{norm}(x) += value * kappa_{n,m}(ell) * (1+x)^{K-sp_{n,m}}
+
+        This is the mechanism used to impose "g̃₃ = v" as a hard parameter
+        rather than a free decision variable, enabling the parametric 2D
+        allowed-region scan (see generate_csdr_pmp_fixed_g3).
     """
     if delta0 is None:
         delta0 = Fraction(1)
 
     def scale(power: int) -> Fraction:
         return Fraction(1) / (delta0 ** power)
+
+    # Pre-compute the extra fixed-variable polynomial contributions keyed to
+    # the norm_index column so we can add them in the obj_pairs loop below.
+    fixed_extra: List[Fraction] = [Fraction(0)] * (K + 1)
+    if fixed_obj_contributions and norm_index is not None:
+        for (fn, fm), fval in fixed_obj_contributions:
+            sp_f = spectral_power_nm(fn, fm)
+            kappa_f = obj_kernel_coeff(fn, fm, ell, d) * scale(sp_f)
+            exp_f = K - sp_f
+            if exp_f < 0:
+                continue
+            poly_f = poly_pad(poly_scale(poly_expand_1px(exp_f), kappa_f * fval), K + 1)
+            fixed_extra = [a + b for a, b in zip(fixed_extra, poly_f)]
 
     poly_vectors: List[List[Fraction]] = []
 
@@ -132,6 +163,9 @@ def _csdr_spin_block(
         kappa = obj_kernel_coeff(n, m, ell, d) * scale(sp)
         exp = K - sp
         poly = poly_pad(poly_scale(poly_expand_1px(exp), kappa), K + 1)
+        # If this is the norm column and fixed contributions exist, add them.
+        if (n, m) == norm_index and any(c != 0 for c in fixed_extra):
+            poly = [p + fe for p, fe in zip(poly, fixed_extra)]
         poly_vectors.append(poly)
 
     for (n, m) in null_pairs:
@@ -175,6 +209,7 @@ def generate_csdr_pmp(
     precision: int = 200,
     bound_direction: str = "upper",
     delta0: int = 1,
+    fixed_obj_contributions: Optional[List[Tuple[Tuple[int, int], "Fraction"]]] = None,
 ) -> Dict[str, Any]:
     """
     Generate SDPB PMP JSON for bounding W_{obj_index} / W_{norm_index}
@@ -207,6 +242,10 @@ def generate_csdr_pmp(
     precision : int         Output decimal precision (default 200).
     bound_direction : str   "upper" (maximize) or "lower" (minimize).
     delta0 : int            IR cutoff (integration starts at s1 = delta0). Default 1.
+    fixed_obj_contributions : list of ((n, m), Fraction), optional
+        Wilson coefficients held fixed (not decision variables) at the given
+        values, encoded in the norm_index polynomial column.  Used by
+        generate_csdr_pmp_fixed_g3 for the parametric 2D scan.
 
     Returns
     -------
@@ -274,6 +313,8 @@ def generate_csdr_pmp(
             d=d,
             precision=precision,
             delta0=delta0_frac,
+            norm_index=norm_index,
+            fixed_obj_contributions=fixed_obj_contributions,
         )
         if block is not None:
             pmp_array.append(block)
@@ -296,10 +337,17 @@ def generate_csdr_pmp(
             "bound_direction": bound_direction,
             "obj_index": list(obj_index),
             "norm_index": list(norm_index),
+            "fixed_obj_contributions": (
+                [{"pair": list(p), "value": str(v)}
+                 for p, v in fixed_obj_contributions]
+                if fixed_obj_contributions else None
+            ),
             "note": (
-                "Objective pairs: only obj_index, norm_index, and pairs with m>=1 "
-                "are included as decision variables. m=0 pairs other than obj/norm "
-                "are excluded to prevent SDP unboundedness. "
+                "Objective pairs: only obj_index and norm_index are decision "
+                "variables (plus null-constraint Lagrange multipliers). "
+                "Additional Wilson coefficients may be held fixed via "
+                "fixed_obj_contributions, encoded in the norm_index polynomial "
+                "column (used for parametric 2D allowed-region scans). "
                 "D formula is ell-dependent for n=m objectives (limit formula) "
                 "and for null constraints. "
                 "Variable: x = s1/delta0 - 1 >= 0."
@@ -317,6 +365,76 @@ def write_pmp_json(pmp: Dict[str, Any], filepath: str) -> None:
     pmp_out = {k: v for k, v in pmp.items() if not k.startswith("_")}
     with open(filepath, "w") as fh:
         json.dump(pmp_out, fh, indent=2)
+
+
+def generate_csdr_pmp_fixed_g3(
+    g3_value: "Fraction",
+    bound_direction: str,
+    d: int,
+    K: int = 8,
+    max_spin: int = 10,
+    precision: int = 200,
+    delta0: int = 1,
+    norm_index: Tuple[int, int] = (1, 0),
+    g3_index: Tuple[int, int] = (1, 1),
+    g4_index: Tuple[int, int] = (2, 0),
+) -> Dict[str, Any]:
+    """
+    Generate an SDPB PMP for the *parametric* 2D allowed-region scan.
+
+    Physics motivation (Extremal EFT sections 3.3–3.4)
+    ---------------------------------------------------
+    The paper's Figure 8 shows a **bounded 2D polygon** in the (g̃₃, g̃₄) plane.
+    To trace its boundary you must fix g̃₃ = v (a parameter) and then run SDPB
+    to find max g̃₄(v) and min g̃₄(v).  Repeating for many values of v fills in
+    the entire 2D boundary.
+
+    A point (v, w) is on the boundary of the allowed region iff w is the
+    extremal value of g̃₄ = W_{2,0}/W_{1,0} subject to:
+      * spectral positivity (all spin blocks ≥ 0)
+      * normalization  W_{1,0} = 1
+      * fixing         W_{0,1} = v  (i.e. g̃₃ = v)
+
+    SDP encoding of "fix g̃₃ = v"
+    ------------------------------
+    Because SDPB allows only **one** normalization equation (c·y = 1), fixing
+    g̃₃ is encoded by folding its spectral contribution into the norm_index
+    column of every spin block:
+
+      p_{norm}(x; ell) ← κ_{1,0}(ell)·(1+x)^{K−2}
+                       + v · κ_{1,1}(ell)·(1+x)^{K−3}
+
+    When SDPB sets z_{1,0} = 1 via the normalization constraint, the combined
+    polynomial automatically contributes (κ_{1,0} + v·κ_{1,1}) to each block,
+    exactly as if g̃₃ = v had been imposed independently.
+
+    The decision variable list is therefore only [z_{1,0}, z_{2,0}, c_{n,m}...]
+    — z_{1,1} (g̃₃) is NOT a free variable; it has been absorbed.
+
+    Parameters
+    ----------
+    g3_value : Fraction   Fixed value of g̃₃ = W_{g3_index}/W_{norm_index}.
+    bound_direction : str "upper" or "lower" bound on g̃₄.
+    d, K, max_spin, precision, delta0 : as in generate_csdr_pmp.
+    norm_index : (n, m)   Wilson coefficient to normalize (default (1,0)).
+    g3_index   : (n, m)   Wilson coefficient to fix as g̃₃ (default (1,1)).
+    g4_index   : (n, m)   Wilson coefficient to bound as g̃₄ (default (2,0)).
+
+    Returns
+    -------
+    dict  SDPB PMP JSON.
+    """
+    return generate_csdr_pmp(
+        obj_index=g4_index,
+        norm_index=norm_index,
+        d=d,
+        K=K,
+        max_spin=max_spin,
+        precision=precision,
+        bound_direction=bound_direction,
+        delta0=delta0,
+        fixed_obj_contributions=[(g3_index, g3_value)],
+    )
 
 
 def generate_pmp_for_ratio_bound(
