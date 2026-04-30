@@ -62,12 +62,28 @@ Case 1: NULL CONSTRAINTS (m > n >= 1)
   D depends on the spin ell.
 
 Case 2: OBJECTIVES (n >= m >= 0)
-  D^{(n,m)}_alpha from user's derivation (derived from CSDR eq.(4)):
+  Two sub-cases:
+
+  2a. n > m (first CSDR index n-m > 0, "standard objectives" like W_{1,0}, W_{2,0}):
     D = sum_{j=0}^{m}
-          (-4)^j * (-1/2)_j * (alpha+1/2)_j * (3j-m-2n) * (n-j)!
-          / ((alpha+3/2)_j * j! * (m-j)! * (n-m)!) * (-1)^{m+j+1}
-  Implemented in D_coeff_obj(n, m, alpha).
-  D does NOT depend on the spin ell (ell enters only via C_ell(1)*(2ell+d-3)).
+          (-4)^j * (-ell/2)_j * (alpha+ell/2)_j * (3j-m-2n) * (n-j)!
+          / ((alpha+1/2)_j * j! * (m-j)! * (n-m)!) * (-1)^{m+j+1}
+    For m=0 the sum reduces to the single j=0 term: D = 2n (independent of ell).
+    Implemented in D_coeff_obj(n, m, ell, alpha).
+
+  2b. n = m (first CSDR index = 0, "on-diagonal objectives" like W_{0,1}):
+    The n > m formula has a 0/0 indeterminate form at j = m = n (the last term
+    has both (3n-n-2n)=0 and the implicit Gamma(m-n) diverge).  The correct value
+    is the regularised limit of the null formula as m -> n from above:
+
+      D^{(n,n)}_{ell,alpha} = (-1)^{n+1} * 4^n * (-ell/2)_n * (alpha+ell/2)_n
+                               / (n! * (alpha+1/2)_n)
+
+    Key property: (-ell/2)_n = 0 whenever ell = 0, 2, ..., 2(n-1), so the kernel
+    vanishes for the lowest 2n/2 = n even spins.  In particular for n=1 (W_{0,1}):
+      D^{(1,1)}_{ell,alpha} = -2*ell*(alpha+ell/2)/(alpha+1/2)
+    which equals 0 at ell=0 and is negative for all ell >= 2.
+    Implemented in D_coeff_obj(n, m, ell, alpha) with a special n==m branch.
 
 Note on CSDR vs Extremal EFT:
 The forms of null constraints and objectives in CSDR may or may not differ from
@@ -193,25 +209,33 @@ def D_coeff_obj(n: int, m: int, ell: int, alpha: Fraction) -> Fraction:
     """
     Compute D^{(n,m)}_{ell,alpha} for OBJECTIVES (n >= m >= 0).
 
-    This uses the SAME underlying CSDR formula as D_coeff (null constraints),
-    but with the combinatorial factor simplified for the n >= m case.
-    The result DEPENDS on the spin ell via (-ell/2)_j and (alpha + ell/2)_j.
+    Two sub-cases depending on whether n == m or n > m.
 
-    Formula (user's corrected derivation from CSDR eq.(4), valid for n >= m >= 0):
+    Case n > m (includes m == 0)
+    ----------------------------
+    Formula (derived from CSDR eq.(4), valid for n > m >= 0):
 
       D^{(n,m)}_{ell,alpha} = sum_{j=0}^{m}
           (-4)^j * (-ell/2)_j * (alpha+ell/2)_j * (3j-m-2n) * (n-j)!
           / ((alpha+1/2)_j * j! * (m-j)! * (n-m)!) * (-1)^{m+j+1}
 
-    The derivation proceeds by simplifying the ratio (-n)_m / ((-n)_{j+1} (j-n)!)
-    using factorials for n >= m (where j <= m <= n so n-j >= 0 always):
+    For m == 0 the sum collapses to D = 2n (independent of ell).
 
-      (3j-m-2n)(-n)_m / (j!(m-j)!(-n)_{j+1})
-      = (3j-m-2n)(n-j)! / (j!(m-j)!(n-m)!) * (-1)^{m+j+1}
+    Case n == m (on-diagonal objectives, first CSDR index = 0)
+    -----------------------------------------------------------
+    The n > m formula has a 0/0 indeterminate form at j = n = m (the last
+    summand has (3n-n-2n) = 0 while the Gamma(m-n) prefactor of the parent
+    null formula diverges).  The correct value is obtained as the regularised
+    limit of the CSDR null formula as m -> n from above:
 
-    The Pochhammer factors (-ell/2)_j and (alpha+ell/2)_j are identical to
-    those in D_coeff (null constraints) — confirming that both objective and
-    null D coefficients come from the same parent CSDR formula.
+      D^{(n,n)}_{ell,alpha} = (-1)^{n+1} * 4^n
+                               * (-ell/2)_n * (alpha+ell/2)_n
+                               / (n! * (alpha+1/2)_n)
+
+    This vanishes whenever (-ell/2)_n = 0, i.e. for ell = 0, 2, ..., 2(n-1).
+    For n = 1 (W_{0,1}):
+      D^{(1,1)}_{ell,alpha} = -2*ell*(alpha+ell/2)/(alpha+1/2)
+    which is 0 at ell=0 and strictly negative for ell >= 2.
 
     Parameters
     ----------
@@ -232,7 +256,24 @@ def D_coeff_obj(n: int, m: int, ell: int, alpha: Fraction) -> Fraction:
             "For null constraints (m > n >= 1), use D_coeff."
         )
 
-    # For n = m = 0: spectral power 2n+m = 0, no valid variable; caller should guard.
+    # --- n == m: use the regularised limit formula ---
+    if n == m and n >= 1:
+        # D^{(n,n)} = (-1)^{n+1} * 4^n * (-ell/2)_n * (alpha+ell/2)_n / [n! * (alpha+1/2)_n]
+        poch_neg = pochhammer(Fraction(-ell, 2), n)
+        poch_pos = pochhammer(alpha + Fraction(ell, 2), n)
+        poch_denom = pochhammer(alpha + Fraction(1, 2), n)
+        if poch_denom == 0:
+            return Fraction(0)
+        sign = Fraction((-1) ** (n + 1))
+        return (
+            sign
+            * Fraction(4 ** n)
+            * poch_neg
+            * poch_pos
+            / (Fraction(factorial(n)) * poch_denom)
+        )
+
+    # --- n > m (includes m == 0): standard sum formula ---
     # For m = 0: sum has only j=0 term:
     #   (-1)^{0+0+1} * (-4)^0 * 1 * 1 * (0-0-2n) * n! / (1 * 1 * 1 * n!) = (-1)*(-2n) = 2n
     total = Fraction(0)
@@ -534,44 +575,44 @@ def check_obj_D_basic() -> bool:
     """
     Basic sanity checks for D_coeff_obj (objectives, corrected ell-dependent formula).
 
-    Verifies consistency with D_coeff (null formula) by checking that for m <= n,
-    the objective formula gives sensible results:
-      - For ell=0: (-ell/2)_j = 0 for j >= 1, so D reduces to the j=0 term only:
-          D(n,m,ell=0) = (-4)^0 * 1 * 1 / 1 * (0-m-2n) * n! / (n-m)! * (-1)^{m+1}
-                       = (-m-2n) * n!/(n-m)! * (-1)^{m+1}
-      - For (n=1, m=0, ell=0): D = (-2) * 1! / 1! * (-1)^1 = 2
-      - For (n=2, m=0, ell=0): D = (-4) * 2! / 2! * (-1)^1 = 4
-      - For (n=1, m=1, ell=0): D = (-3) * 1! / 0! * (-1)^2 = -3
+    Verifies:
+      - m=0 cases: D(n, 0, ell=0) = 2n  (ell-independent forward dispersion).
+      - n=m cases: D(n, n, ell=0) = 0   (the limit formula vanishes at ell=0
+          because (-ell/2)_n = 0 when ell=0 and n>=1).
+      - n=m, ell>=2: D is ell-dependent and negative.
+        D(1,1,2,alpha=1/2) = -6  [= -2*(alpha=1/2)*(1+2)/(alpha+1/2=1) ]
 
     Returns True if all checks pass.
     """
     alpha = Fraction(1, 2)
     passed = True
 
-    # ell=0: only j=0 term survives since (-ell/2)_j = (-0)_j = 0 for j>=1
-    # j=0: (-4)^0 * 1 * 1 * (0-m-2n) * n! / (n-m)! * (-1)^{m+1}
-    #     = (−m−2n) * n!/(n-m)! * (−1)^{m+1}
-    # (n=1, m=0): (-0-2)*1!/1! * (-1)^1 = (-2)*1*(-1) = 2
+    # m=0 forward-dispersion cases (ell-independent)
+    # D(1,0,any_ell) = 2
     val = D_coeff_obj(1, 0, 0, alpha)
     if val != Fraction(2):
         passed = False
 
-    # (n=2, m=0): (-0-4)*2!/2! * (-1)^1 = (-4)*1*(-1) = 4
+    # D(2,0,any_ell) = 4
     val = D_coeff_obj(2, 0, 0, alpha)
     if val != Fraction(4):
         passed = False
 
-    # (n=1, m=1, ell=0): (0-1-2)*1!/0! * (-1)^2 = (-3)*1*1 = -3
+    # n=m limit formula: D(n,n,ell=0) = 0 because (-ell/2)_n|_{ell=0} = 0 for n>=1.
+    # Old buggy sum formula returned -3 here; the corrected limit gives 0.
     val = D_coeff_obj(1, 1, 0, alpha)
-    if val != Fraction(-3):
+    if val != Fraction(0):
         passed = False
 
-    # Cross-check: for n=m (W_{0,m}), formula should be well-defined (n-m)!=0!=1
-    # (n=1, m=1, ell=2, d=4 => alpha=1/2):
-    # Expected: same structure as null formula applied to this case
+    # n=m, ell=2: D(1,1,2,1/2) = -2*2*(1/2+1)/1 = -6
     val = D_coeff_obj(1, 1, 2, alpha)
-    # Check it's a rational number (no error thrown)
-    if not isinstance(val, Fraction):
+    if val != Fraction(-6):
         passed = False
+
+    # Verify D is a Fraction (no errors) for a few more cases.
+    for ell in [4, 6]:
+        v = D_coeff_obj(1, 1, ell, alpha)
+        if not isinstance(v, Fraction):
+            passed = False
 
     return passed

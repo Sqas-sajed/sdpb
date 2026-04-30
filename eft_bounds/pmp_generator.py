@@ -33,7 +33,16 @@ For each even spin ell in {0,2,...,ell_max}, one 1×1 polynomial block:
 The SDPB problem maximizes b·z subject to c·z = 1 and P^{(ell)}(x) >= 0 for all x >= 0.
 
 Key properties:
-  * obj_kernel >= 0 for all ell, d => objectives always have positive kernels.
+  * obj_kernel >= 0 for m=0 objectives (D=2n>0, independent of ell).
+  * obj_kernel = 0 at ell=0 and < 0 for ell>=2 when n=m (e.g. W_{0,1}).
+    Including such on-diagonal operators as free variables does NOT break SDP
+    boundedness because their zero-at-ell=0 kernel prevents compensating the
+    J=0 block bound.
+  * m=0 objectives other than the norm/obj pair have D=2n>0 at every spin,
+    so adding them as unconstrained free variables always allows the objective
+    to grow without limit.  generate_csdr_pmp therefore excludes m=0 pairs
+    that are neither the objective nor the normalization from the decision
+    variable vector.
   * null_kernel can be negative (D can be negative) => null constraints are
     non-trivially enforced by the Lagrange multipliers c_{n,m}.
   * Different from Extremal EFT (fixed-t dispersion) spectral functions.
@@ -203,19 +212,37 @@ def generate_csdr_pmp(
     -------
     dict  SDPB PMP JSON.
     """
-    obj_pairs = enumerate_obj_pairs_nm(K)
+    obj_pairs_all = enumerate_obj_pairs_nm(K)
     null_pairs = enumerate_null_pairs(K)
 
-    if obj_index not in obj_pairs:
+    if obj_index not in obj_pairs_all:
         raise ValueError(
             f"obj_index {obj_index} not in objective pairs for K={K}. "
-            f"Available: {obj_pairs}"
+            f"Available: {obj_pairs_all}"
         )
-    if norm_index not in obj_pairs:
+    if norm_index not in obj_pairs_all:
         raise ValueError(
             f"norm_index {norm_index} not in objective pairs for K={K}. "
-            f"Available: {obj_pairs}"
+            f"Available: {obj_pairs_all}"
         )
+
+    # Build the decision-variable list for objective operators.
+    #
+    # Only include a pair (n', m') if at least one of the following holds:
+    #   (a) it is the objective being bounded  (obj_index), or
+    #   (b) it is the normalization operator   (norm_index), or
+    #   (c) m' >= 1  (on-diagonal or higher; kernel can be zero/negative at
+    #                  some spins, so these do NOT make the SDP unbounded).
+    #
+    # Pairs with m'=0 other than obj/norm have D=2n'>0 at EVERY spin (strictly
+    # positive-definite kernel).  Including them as free variables would allow
+    # their coefficient z to grow without bound and compensate for any objective
+    # divergence, making the SDP infeasible/unbounded.  They are therefore
+    # excluded here.
+    obj_pairs = [
+        p for p in obj_pairs_all
+        if p == obj_index or p == norm_index or p[1] >= 1
+    ]
 
     N_obj = len(obj_pairs)
     N_null = len(null_pairs)
@@ -267,8 +294,11 @@ def generate_csdr_pmp(
             "obj_index": list(obj_index),
             "norm_index": list(norm_index),
             "note": (
-                "Objective pairs include W_{0,m} (n=m). "
-                "D formula is ell-dependent for both objectives and null constraints. "
+                "Objective pairs: only obj_index, norm_index, and pairs with m>=1 "
+                "are included as decision variables. m=0 pairs other than obj/norm "
+                "are excluded to prevent SDP unboundedness. "
+                "D formula is ell-dependent for n=m objectives (limit formula) "
+                "and for null constraints. "
                 "Variable: x = s1/delta0 - 1 >= 0."
             ),
         },
