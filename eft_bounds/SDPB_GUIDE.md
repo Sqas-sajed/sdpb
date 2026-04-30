@@ -95,25 +95,39 @@ During installation, check the box **"Add Python to PATH"**.
 
 ## Extract the required Python files
 
-You need **five files** from `eft_bounds/` in this repository. Copy them to a
-folder on your computer, e.g. `C:\sdpb_eft\`.
+You need **six files** from `eft_bounds/` in this repository. Copy the entire
+`eft_bounds/` folder to your working directory on your computer,
+e.g. `C:\sdpb_eft\`.
 
-Your folder structure must look like this:
+Your folder structure must look exactly like this:
 
 ```
 C:\sdpb_eft\
-    generate_pmp.py              ← the script you run from the command line
     eft_bounds\
         __init__.py
         csdr.py
+        null_constraints.py
         physics.py
         pmp_generator.py
-        generate_pmp.py          ← keep a copy here too (for internal imports)
+        generate_pmp.py          ← this is the script you run from the command line
 ```
 
-> **Where to find these files:** In the GitHub repository, go to the
-> `eft_bounds/` directory, click each `.py` file, then click the download
-> button (or copy the raw text into a new file with the same name).
+> **Where to find these files:** In the GitHub repository, open the
+> `eft_bounds/` directory and download all six `.py` files listed above.
+> Click each file, then click the **Raw** button and save the page (or copy
+> the text into a new file with the same name).  Keep them inside the
+> `eft_bounds\` sub-folder — **do not** move `generate_pmp.py` to the parent
+> folder.
+
+> **Why `null_constraints.py` is required:** `pmp_generator.py` imports from
+> it for the backward-compatibility shim used by `crossing_pipeline.py`.
+> Without this file present, Python will raise an `ImportError` as soon as
+> `pmp_generator` is loaded.
+
+> **Note on the JSON output:** `pmp_generator.py` automatically strips any
+> internal `_metadata` key from the file it writes to disk.  This is
+> intentional — `pmp2sdp` rejects unknown top-level keys, so the metadata is
+> kept in memory only and never written to the `.json` file that Docker reads.
 
 ---
 
@@ -126,12 +140,12 @@ cd C:\sdpb_eft
 
 List available operators (useful to understand the notation):
 ```powershell
-python generate_pmp.py --d 4 --K 4 --obj 1 0 --norm 1 0 --list-pairs
+python eft_bounds\generate_pmp.py --d 4 --K 4 --obj 1 0 --norm 1 0 --list-pairs
 ```
 
 Generate an upper-bound PMP file for g̃₃ = W_{0,1}/W_{1,0}:
 ```powershell
-python generate_pmp.py --obj 1 1 --norm 1 0 --d 4 --K 4 --max-spin 10 --delta0 40 --direction upper --output upper_g3.json
+python eft_bounds\generate_pmp.py --obj 1 1 --norm 1 0 --d 4 --K 4 --max-spin 10 --delta0 40 --direction upper --output upper_g3.json
 ```
 
 This creates `upper_g3.json` and prints **Next steps** with the exact Docker
@@ -220,10 +234,10 @@ A `terminateReason` of `"found primal-dual optimal solution"` means success.
 ### Step 1: Generate 4 PMP files
 
 ```powershell
-python generate_pmp.py --obj 1 1 --norm 1 0 --d 4 --K 4 --max-spin 10 --delta0 40 --direction upper --output ub_g3.json
-python generate_pmp.py --obj 1 1 --norm 1 0 --d 4 --K 4 --max-spin 10 --delta0 40 --direction lower --output lb_g3.json
-python generate_pmp.py --obj 2 0 --norm 1 0 --d 4 --K 4 --max-spin 10 --delta0 40 --direction upper --output ub_g4.json
-python generate_pmp.py --obj 2 0 --norm 1 0 --d 4 --K 4 --max-spin 10 --delta0 40 --direction lower --output lb_g4.json
+python eft_bounds\generate_pmp.py --obj 1 1 --norm 1 0 --d 4 --K 4 --max-spin 10 --delta0 40 --direction upper --output ub_g3.json
+python eft_bounds\generate_pmp.py --obj 1 1 --norm 1 0 --d 4 --K 4 --max-spin 10 --delta0 40 --direction lower --output lb_g3.json
+python eft_bounds\generate_pmp.py --obj 2 0 --norm 1 0 --d 4 --K 4 --max-spin 10 --delta0 40 --direction upper --output ub_g4.json
+python eft_bounds\generate_pmp.py --obj 2 0 --norm 1 0 --d 4 --K 4 --max-spin 10 --delta0 40 --direction lower --output lb_g4.json
 ```
 
 Each command prints the exact `docker run` commands for that file.
