@@ -1,0 +1,140 @@
+{
+  "passed": true,
+  "d": 4,
+  "alpha": "0.5",
+  "checks": [
+    {
+      "name": "D^(1,2)_ell0_d4",
+      "passed": true,
+      "direct": "0",
+      "closed_form": "0"
+    },
+    {
+      "name": "D^(1,2)_ell2_d4",
+      "passed": true,
+      "direct": "-6",
+      "closed_form": "-6"
+    },
+    {
+      "name": "D^(1,2)_ell4_d4",
+      "passed": true,
+      "direct": "120",
+      "closed_form": "120"
+    },
+    {
+      "name": "D^(1,2)_ell6_d4",
+      "passed": true,
+      "direct": "714",
+      "closed_form": "714"
+    },
+    {
+      "name": "D^(1,2)_ell8_d4",
+      "passed": true,
+      "direct": "2304",
+      "closed_form": "2304"
+    },
+    {
+      "name": "C_ell(1)_d4_ell0",
+      "passed": true,
+      "value": "1",
+      "expected": "1"
+    },
+    {
+      "name": "C_ell(1)_d4_ell2",
+      "passed": true,
+      "value": "1",
+      "expected": "1"
+    },
+    {
+      "name": "C_ell(1)_d4_ell4",
+      "passed": true,
+      "value": "1",
+      "expected": "1"
+    },
+    {
+      "name": "null_kernel_(1,2)_ell2_d4",
+      "passed": true,
+      "value": "-30"
+    },
+    {
+      "name": "obj_kernel_(1,0)_ell0_d4_positive",
+      "passed": true,
+      "value": "2"
+    },
+    {
+      "name": "obj_kernel_(1,0)_ell2_d4_positive",
+      "passed": true,
+      "value": "10"
+    },
+    {
+      "name": "enumeration_K8",
+      "passed": true,
+      "n_null_pairs": 7,
+      "n_obj_pairs": 7,
+      "null_pairs": [
+        [
+          1,
+          2
+        ],
+        [
+          1,
+          3
+        ],
+        [
+          1,
+          4
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          1,
+          5
+        ],
+        [
+          2,
+          4
+        ],
+        [
+          1,
+          6
+        ]
+      ],
+      "obj_pairs": [
+        [
+          1,
+          0
+        ],
+        [
+          2,
+          0
+        ],
+        [
+          1,
+          1
+        ],
+        [
+          3,
+          0
+        ],
+        [
+          2,
+          1
+        ],
+        [
+          4,
+          0
+        ],
+        [
+          1,
+          2
+        ]
+      ]
+    },
+    {
+      "name": "csdr_check_closed_form_1_2",
+      "passed": true
+    }
+  ]
+}
