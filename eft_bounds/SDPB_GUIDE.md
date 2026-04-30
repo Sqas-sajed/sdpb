@@ -71,17 +71,18 @@ Open Docker Desktop → **Settings** → **General** → confirm
 Open a **PowerShell** window and run:
 
 ```powershell
-docker pull --platform linux/amd64 bootstrapcollaboration/sdpb:master
+docker pull --platform linux/amd64 bootstrapcollaboration/sdpb:3.1.0
 ```
 
 The `--platform linux/amd64` flag ensures the x86-64 Linux image is pulled
-explicitly.  You can also use a specific release tag, e.g.
-`bootstrapcollaboration/sdpb:3.1.0`.
+explicitly.  We use the stable `3.1.0` release tag; avoid the `master` tag
+as it may have binary-format issues that cause `exec format error` on some
+platforms.
 
 Test it works:
 
 ```powershell
-docker run --rm --platform linux/amd64 bootstrapcollaboration/sdpb:master sdpb --help
+docker run --rm --platform linux/amd64 bootstrapcollaboration/sdpb:3.1.0 sdpb --help
 ```
 
 You should see the SDPB option list.
@@ -177,7 +178,7 @@ All commands below are **single-line** — copy each as one line.
 ### Step 1: Convert PMP → SDP with `pmp2sdp`
 
 ```powershell
-docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:master mpirun --allow-run-as-root -n 4 pmp2sdp --precision 1024 -i /usr/local/share/sdpb/upper_g3.json -o /usr/local/share/sdpb/sdp_upper_g3
+docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:3.1.0 mpirun --allow-run-as-root -n 4 pmp2sdp --precision 1024 -i /usr/local/share/sdpb/upper_g3.json -o /usr/local/share/sdpb/sdp_upper_g3
 ```
 
 Options explained:
@@ -195,7 +196,7 @@ This creates `C:\sdpb_eft\sdp_upper_g3\` with `control.json`,
 ### Step 2: Run SDPB
 
 ```powershell
-docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:master mpirun --allow-run-as-root -n 4 sdpb --precision=1024 -s /usr/local/share/sdpb/sdp_upper_g3 -o /usr/local/share/sdpb/out_upper_g3 -c /usr/local/share/sdpb/out_upper_g3/ck
+docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:3.1.0 mpirun --allow-run-as-root -n 4 sdpb --precision=1024 -s /usr/local/share/sdpb/sdp_upper_g3 -o /usr/local/share/sdpb/out_upper_g3 -c /usr/local/share/sdpb/out_upper_g3/ck
 ```
 
 Options explained:
@@ -225,7 +226,7 @@ A `terminateReason` of `"found primal-dual optimal solution"` means success.
 
 > **Note on root-owned files:** Files written by Docker may be owned by
 > root and cannot be deleted in Windows Explorer.  Delete them with:
-> `docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:master rm -rf /usr/local/share/sdpb/out_upper_g3`
+> `docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:3.1.0 rm -rf /usr/local/share/sdpb/out_upper_g3`
 
 ---
 
@@ -247,9 +248,9 @@ Each command prints the exact `docker run` commands for that file.
 Use the printed commands, or adapt this pattern (example for `lb_g3.json`):
 
 ```powershell
-docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:master mpirun --allow-run-as-root -n 4 pmp2sdp --precision 1024 -i /usr/local/share/sdpb/lb_g3.json -o /usr/local/share/sdpb/sdp_lb_g3
+docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:3.1.0 mpirun --allow-run-as-root -n 4 pmp2sdp --precision 1024 -i /usr/local/share/sdpb/lb_g3.json -o /usr/local/share/sdpb/sdp_lb_g3
 
-docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:master mpirun --allow-run-as-root -n 4 sdpb --precision=1024 -s /usr/local/share/sdpb/sdp_lb_g3 -o /usr/local/share/sdpb/out_lb_g3 -c /usr/local/share/sdpb/out_lb_g3/ck
+docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:3.1.0 mpirun --allow-run-as-root -n 4 sdpb --precision=1024 -s /usr/local/share/sdpb/sdp_lb_g3 -o /usr/local/share/sdpb/out_lb_g3 -c /usr/local/share/sdpb/out_lb_g3/ck
 ```
 
 ### Step 3: Collect results
@@ -336,7 +337,7 @@ These take `--precision` in **bits**:
 | 1024 | ~308 | Safe default (matches 200-digit PMP input) |
 | 2048 | ~616 | High-precision production runs |
 
-Run `docker run --rm --platform linux/amd64 bootstrapcollaboration/sdpb:master sdpb --help` to see all available `sdpb` options.
+Run `docker run --rm --platform linux/amd64 bootstrapcollaboration/sdpb:3.1.0 sdpb --help` to see all available `sdpb` options.
 
 ---
 
@@ -368,7 +369,7 @@ where D is spin-dependent and α = (d−3)/2.
   **Check 2 — wrong image cached:** even in Linux mode, an old cached image
   for the wrong architecture can cause this.  Re-pull explicitly:
   ```powershell
-  docker pull --platform linux/amd64 bootstrapcollaboration/sdpb:master
+  docker pull --platform linux/amd64 bootstrapcollaboration/sdpb:3.1.0
   ```
   Then retry your `docker run --platform linux/amd64 …` command.
 
@@ -410,9 +411,9 @@ The `eft_bounds/examples/` directory contains pre-generated PMP files
 **To use them directly** (copy `examples/` to `C:\sdpb_eft\examples\`):
 
 ```powershell
-docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:master mpirun --allow-run-as-root -n 4 pmp2sdp --precision 1024 -i /usr/local/share/sdpb/examples/upper_W01_over_W10_K4_d4_delta40.json -o /usr/local/share/sdpb/sdp_ub_g3
+docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:3.1.0 mpirun --allow-run-as-root -n 4 pmp2sdp --precision 1024 -i /usr/local/share/sdpb/examples/upper_W01_over_W10_K4_d4_delta40.json -o /usr/local/share/sdpb/sdp_ub_g3
 
-docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:master mpirun --allow-run-as-root -n 4 sdpb --precision=1024 -s /usr/local/share/sdpb/sdp_ub_g3 -o /usr/local/share/sdpb/out_ub_g3 -c /usr/local/share/sdpb/out_ub_g3/ck
+docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" bootstrapcollaboration/sdpb:3.1.0 mpirun --allow-run-as-root -n 4 sdpb --precision=1024 -s /usr/local/share/sdpb/sdp_ub_g3 -o /usr/local/share/sdpb/out_ub_g3 -c /usr/local/share/sdpb/out_ub_g3/ck
 
 type C:\sdpb_eft\out_ub_g3\out.txt
 ```
