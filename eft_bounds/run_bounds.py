@@ -261,6 +261,7 @@ def run_bounds(
     K: int = 8,
     max_spin: int = 10,
     precision: int = 200,
+    delta0: int = 1,
     bounds_to_compute: List[Tuple[Tuple[int, int], Tuple[int, int], str]] = None,
 ) -> Dict[str, Any]:
     """
@@ -273,6 +274,8 @@ def run_bounds(
     K : int              Maximum spectral power (2p+3q cutoff).
     max_spin : int       Maximum even spin.
     precision : int      Decimal precision for SDPB files.
+    delta0 : int         IR cutoff: integration starts at s1 = delta0 (default 1).
+                         Use delta0 = 40 (or similar) for well-conditioned problems.
     bounds_to_compute :  List of (obj_index, norm_index, direction) tuples.
                          If None, uses a default set.
 
@@ -319,6 +322,7 @@ def run_bounds(
                 max_spin=max_spin,
                 precision=precision,
                 bound_direction=direction,
+                delta0=delta0,
             )
             fname = (
                 f"csdr_pmp_{direction}_W{obj_idx[0]}_{obj_idx[1]}"
@@ -336,6 +340,7 @@ def run_bounds(
         "output_dir": output_dir,
         "d": d,
         "K": K,
+        "delta0": delta0,
         "max_spin": max_spin,
         "all_checks_passed": checks["passed"],
         "files": files,

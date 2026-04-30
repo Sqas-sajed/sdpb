@@ -228,20 +228,23 @@ def generate_csdr_pmp(
 
     # Build the decision-variable list for objective operators.
     #
-    # Only include a pair (n', m') if at least one of the following holds:
-    #   (a) it is the objective being bounded  (obj_index), or
-    #   (b) it is the normalization operator   (norm_index), or
-    #   (c) m' >= 1  (on-diagonal or higher; kernel can be zero/negative at
-    #                  some spins, so these do NOT make the SDP unbounded).
+    # Only include a pair (n', m') if it is the objective being bounded
+    # (obj_index) or the normalization operator (norm_index).
     #
-    # Pairs with m'=0 other than obj/norm have D=2n'>0 at EVERY spin (strictly
-    # positive-definite kernel).  Including them as free variables would allow
-    # their coefficient z to grow without bound and compensate for any objective
-    # divergence, making the SDP infeasible/unbounded.  They are therefore
-    # excluded here.
+    # All other objective pairs — including off-diagonal m'>=1 pairs such as
+    # (2,1), (3,1), (3,2) — have non-zero kernel at spin ell=0 (e.g., D=−10,
+    # −21, +24 for those pairs).  All null-constraint kernels are zero at
+    # ell=0, so the ell=0 spin block provides the key bounding constraint:
+    #
+    #   P^0(x) = kappa_norm * (1+x)^{K-sp_norm} + z_obj * kappa_obj * (1+x)^{K-sp_obj} >= 0
+    #
+    # which forces  z_obj >= -kappa_norm/kappa_obj  (a finite lower bound).
+    # Including any extra variable with a non-zero ell=0 kernel destroys this
+    # constraint: those free variables can compensate for any value of z_obj at
+    # ell=0, making the SDP primal-unbounded and causing mu to diverge.
     obj_pairs = [
         p for p in obj_pairs_all
-        if p == obj_index or p == norm_index or p[1] >= 1
+        if p == obj_index or p == norm_index
     ]
 
     N_obj = len(obj_pairs)
