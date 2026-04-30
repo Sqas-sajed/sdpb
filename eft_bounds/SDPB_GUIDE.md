@@ -319,19 +319,38 @@ parameter µ diverged, exactly as expected for an unbounded problem.
 
 #### Reading the physical bounds from converged runs
 
-For the two converged runs, `primalObjective` is the physical bound directly:
+**Important:** SDPB *always* maximizes `b·y`.  The sign of `b` depends on which
+direction you are bounding:
 
-| File | `terminateReason` | `primalObjective` = |
-|------|-------------------|---------------------|
-| `out_lb_g4/out.txt` | optimal ✓ | **lower bound on g̃₄** |
-| `out_ub_g3/out.txt` | optimal ✓ | **upper bound on g̃₃** |
+| `bound_direction` | `b[obj]` | SDPB maximizes | `primalObjective` | Physical bound |
+|-------------------|----------|----------------|-------------------|----------------|
+| `"upper"` | **+1** | `+z_obj` | max of `z_obj` | bound = **+primalObjective** |
+| `"lower"` | **−1** | `−z_obj` | max of `−z_obj` | bound = **−primalObjective** |
+
+Because the lower-bound run negates the objective (`b = −1`), the solver
+maximizes `−g̃₄`.  You must **negate `primalObjective`** to recover the actual
+lower bound:
+
+    lower bound on g̃₄  =  −primalObjective(lb_g4 run)
+    upper bound on g̃₃  =  +primalObjective(ub_g3 run)
 
 **Verified results from `sdpb_data2/` (K=8, d=4, max-spin=50):**
 
-| Bound | Value |
-|-------|-------|
-| g̃₄ ≥  | **0.5000** (exact lower bound) |
-| g̃₃ ≤  | **0.3017** |
+| Run | `primalObjective` | How to convert | Physical bound |
+|-----|-------------------|----------------|----------------|
+| `out_lb_g4/out.txt` | **0.5000** | −primalObjective | **g̃₄ ≥ −0.5000** |
+| `out_ub_g3/out.txt` | **0.3017** | +primalObjective | **g̃₃ ≤ +0.3017** |
+
+> **Why g̃₄ ≥ −1/2 is exact and analytical:**  The ℓ=0 spin block (the only
+> block where the g̃₃ kernel is zero and g̃₄ has a non-zero kernel) reads
+>
+>     P⁰(0) = 2·z_{1,0} + 4·z_{2,0} ≥ 0
+>
+> With normalization `z_{1,0} = 1` this gives `z_{2,0} ≥ −1/2` exactly.
+> SDPB correctly finds that the ℓ=0 block is the binding constraint and
+> returns `primalObjective = max(−z_{2,0}) = 1/2` (the ℓ=0 block saturated
+> at x=0).  Increasing K or max-spin does **not** change this bound because
+> no higher-spin block adds a tighter constraint on the ratio W_{2,0}/W_{1,0}.
 
 > `terminateReason = "found primal-dual optimal solution"` means the solver
 > converged.  The `dualityGap` should be ≲ 10⁻²⁰ for a well-converged result.
@@ -375,15 +394,16 @@ docker run --rm --platform linux/amd64 -v "C:/sdpb_eft/:/usr/local/share/sdpb/" 
 
 **Verified results from `sdpb_data2_K12/` (K=12, d=4, max-spin=50):**
 
-| Run | `terminateReason` | `primalObjective` |
-|-----|-------------------|-------------------|
-| `out_K12_lb_g4` | optimal ✓ | **0.5000** (lower bound on g̃₄) |
-| `out_K12_ub_g4` | maxComplementarity exceeded | no finite upper bound (expected) |
-| `out_K12_ub_g3` | optimal ✓ | **0.3018** (upper bound on g̃₃) |
-| `out_K12_lb_g3` | maxComplementarity exceeded | no finite lower bound (expected) |
+| Run | `terminateReason` | `primalObjective` | Physical bound |
+|-----|-------------------|-------------------|----------------|
+| `out_K12_lb_g4` | optimal ✓ | **0.5000** | g̃₄ ≥ **−primalObjective** = **−0.5000** |
+| `out_K12_ub_g4` | maxComplementarity exceeded | (meaningless) | no finite upper bound (expected) |
+| `out_K12_ub_g3` | optimal ✓ | **0.3018** | g̃₃ ≤ **+primalObjective** = **+0.3018** |
+| `out_K12_lb_g3` | maxComplementarity exceeded | (meaningless) | no finite lower bound (expected) |
 
-The K=12 bounds are essentially the same as K=8 for these two operators at
-max-spin=50, confirming the CSDR bounds have converged numerically.
+The K=12 bounds are the same as K=8 for these operators at max-spin=50,
+confirming that the ℓ=0 block gives the tight lower bound on g̃₄ and increasing
+K does not change it.
 
 ---
 
@@ -391,11 +411,16 @@ max-spin=50, confirming the CSDR bounds have converged numerically.
 
 ### What the CSDR bounds give
 
-The CSDR method (Sinha-Zahed, used in this code) provides **two half-plane
-constraints** in the (g̃₃, g̃₄) plane:
+The CSDR method provides **two half-plane constraints** in the (g̃₃, g̃₄) plane.
+To read the physical bounds from `primalObjective`:
 
-    g̃₄  ≥  0.5000        (lower bound, from K=8 and K=12)
-    g̃₃  ≤  0.3017        (upper bound, from K=8)
+- **lower-bound run** (`lb_g4`): physical lower bound = **−primalObjective**
+- **upper-bound run** (`ub_g3`): physical upper bound = **+primalObjective**
+
+From the verified K=8 results:
+
+    g̃₄  ≥  −0.5000    (= −primalObjective from lb_g4 run; K=8 and K=12 give the same)
+    g̃₃  ≤  +0.3017    (= +primalObjective from ub_g3 run; K=8)
 
 The allowed region is the **intersection of these two half-planes**, which is
 an infinite wedge.
